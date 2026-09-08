@@ -3,7 +3,7 @@ export interface Env {
   CACHE: KVNamespace;
   ASSETS: Fetcher;
   APP_NAME: string;
-  APP_ORIGIN: string;
+  APP_ORIGIN?: string;
   SESSION_TTL: string;
   SUB_CACHE_TTL: string;
   MAX_SOURCE_SIZE: string;
