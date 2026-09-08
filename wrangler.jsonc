@@ -29,9 +29,6 @@
     "SUB_CACHE_TTL": "300",
     "MAX_SOURCE_SIZE": "5242880"
   },
-  "triggers": {
-    "crons": ["*/30 * * * *"]
-  },
   "observability": {
     "enabled": true
   }
