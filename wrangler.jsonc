@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "cloudsub",
-      "migrations_dir": "migrations","database_id": "b971c8c3-b5a7-49b1-be44-549eb177930d"
+      "migrations_dir": "migrations","database_id": "b88ce547-a6fb-4b70-8d3e-fb26c615605a"
     }
   ],
   "kv_namespaces": [
