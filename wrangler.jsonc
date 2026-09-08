@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cloudsub",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-07-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cloudsub",
+      "migrations_dir": "migrations","database_id": "b971c8c3-b5a7-49b1-be44-549eb177930d"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE","id": "26e63922b23b41a4b41b674493aaac5f"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "CloudSub",
+    "APP_ORIGIN": "CN",
+    "SESSION_TTL": "604800",
+    "SUB_CACHE_TTL": "300",
+    "MAX_SOURCE_SIZE": "5242880"
+  },
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
