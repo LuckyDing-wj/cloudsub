@@ -134,7 +134,7 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 
 - **SSRF 防护** — 拦截私有 IP (10.x / 127.x / 169.254.x / 172.16-31.x / 192.168.x)、链路本地、保留地址；归一化十进制/十六进制/八进制/短式 IPv4 编码；识别 IPv4-mapped、IPv4-compatible 与 NAT64 IPv6 中内嵌的 IPv4；强制 HTTPS；重定向重新校验
 - **数据加密** — 数据源的 URL、请求头、内容使用 AES-256-GCM 加密存储
-- **密码哈希** — PBKDF2-SHA256，210,000 次迭代
+- **密码哈希** — PBKDF2-SHA256，100,000 次迭代（Cloudflare Workers WebCrypto 的 PBKDF2 上限）
 - **会话管理** — HMAC 存储的 session token，HttpOnly + Secure + SameSite=Strict cookie
 - **CSRF 保护** — 双重 token（cookie + header），常量时间比较
 - **登录限流** — 5 次失败后锁定 15 分钟

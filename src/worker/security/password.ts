@@ -1,7 +1,12 @@
 import { base64UrlToBytes, bytesToBase64Url, constantTimeEqual } from "./crypto";
 
 const encoder = new TextEncoder();
-const ITERATIONS = 210_000;
+// Cloudflare Workers' WebCrypto rejects PBKDF2 iteration counts above 100000
+// ("Pbkdf2 failed: iteration counts above 100000 are not supported"), so the
+// OWASP-recommended 210k is not reachable on this runtime. 100000 is the
+// maximum supported value and still exceeds the 2023 OWASP floor (600k for
+// PBKDF2-HMAC-SHA256 is *not* achievable here).
+const ITERATIONS = 100_000;
 
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return new Uint8Array(bytes).buffer;
