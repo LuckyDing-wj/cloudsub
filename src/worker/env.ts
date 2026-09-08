@@ -10,6 +10,8 @@ export interface Env {
   APP_SECRET?: string;
   DATA_ENCRYPTION_KEY?: string;
   INITIAL_ADMIN_TOKEN?: string;
+  /** Set to "0" to skip DNS pre-resolution in the SSRF filter. */
+  SSRF_DNS_CHECK?: string;
 }
 
 export interface SessionPrincipal {

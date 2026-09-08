@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { AppBindings } from "../env";
 import { body, pageParams } from "../http";
-import { writeAudit } from "../services/audit";
+import { writeAuditDeferred } from "../services/audit";
 import { settingsSchema } from "../validation";
 
 /** Dashboard summary, system settings, and audit-log listing. */
@@ -29,7 +29,7 @@ export function registerSystemRoutes(app: Hono<AppBindings>): void {
     const value = { ...(current ? JSON.parse(current.value_json) : {}), timezone: input.timezone };
     await context.env.DB.prepare("INSERT INTO settings (key, value_json, updated_at) VALUES ('system', ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").bind(JSON.stringify(value), now).run();
     const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "settings.update", targetType: "system", details: { timezone: input.timezone }, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "settings.update", targetType: "system", details: { timezone: input.timezone }, requestId: context.get("requestId") });
     return context.json({ data: value });
   });
 

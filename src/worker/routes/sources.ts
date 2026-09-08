@@ -4,7 +4,8 @@ import type { AppBindings } from "../env";
 import { body, likePattern, pageParams, redactedUpstreamUrl } from "../http";
 import { decryptJson, encryptJson } from "../security/crypto";
 import { validateUpstreamUrl } from "../security/safe-fetch";
-import { writeAudit } from "../services/audit";
+import { writeAuditDeferred } from "../services/audit";
+import { consumeRateLimit } from "../services/rate-limit";
 import { refreshSource } from "../services/sources";
 import { AppError } from "../shared/errors";
 import { sourceCreateSchema, sourceUpdateSchema } from "../validation";
@@ -20,7 +21,11 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
     const search = (context.req.query("q") ?? "").slice(0, 100);
     const pattern = likePattern(search);
     const [items, total] = await Promise.all([
-      context.env.DB.prepare("SELECT s.id, s.name, s.type, s.source_kind, s.url, s.enabled, s.refresh_interval, s.timeout_ms, s.next_refresh_at, s.last_success_at, s.last_error, s.created_at, s.updated_at, SUM(CASE WHEN n.present = 1 THEN 1 ELSE 0 END) AS node_count FROM sources s LEFT JOIN nodes n ON n.source_id = s.id WHERE s.name LIKE ? ESCAPE '\\' GROUP BY s.id ORDER BY s.created_at DESC LIMIT ? OFFSET ?").bind(pattern, pageSize, offset).all(),
+      // The node count used to come from a LEFT JOIN + GROUP BY over the
+      // whole `nodes` table just to return 25 rows. The correlated count
+      // below reads the (source_id, present) index for the page's sources
+      // only, which is several orders of magnitude less work.
+      context.env.DB.prepare("SELECT s.id, s.name, s.type, s.source_kind, s.url, s.enabled, s.refresh_interval, s.timeout_ms, s.next_refresh_at, s.last_success_at, s.last_error, s.created_at, s.updated_at, (SELECT COUNT(*) FROM nodes n WHERE n.source_id = s.id AND n.present = 1) AS node_count FROM sources s WHERE s.name LIKE ? ESCAPE '\\' ORDER BY s.created_at DESC LIMIT ? OFFSET ?").bind(pattern, pageSize, offset).all(),
       context.env.DB.prepare("SELECT COUNT(*) AS count FROM sources WHERE name LIKE ? ESCAPE '\\'").bind(pattern).first<{ count: number }>(),
     ]);
     return context.json({ data: { items: items.results, page, pageSize, total: total?.count ?? 0 } });
@@ -67,7 +72,7 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
     let refreshError: string | undefined;
     try { refresh = await refreshSource(context.env, id, { force: true }); } catch (error) { refreshError = error instanceof AppError ? error.message : "首次解析失败"; }
     const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "source.create", targetType: "source", targetId: id, details: { name: input.name, type: input.type, sourceKind: input.sourceKind }, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.create", targetType: "source", targetId: id, details: { name: input.name, type: input.type, sourceKind: input.sourceKind }, requestId: context.get("requestId") });
     return context.json({ data: { id, sourceKind: input.sourceKind, refresh, refreshError } }, 201);
   });
 
@@ -119,7 +124,7 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
     }
     await context.env.DB.batch(statements);
     const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "source.update", targetType: "source", targetId: id, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.update", targetType: "source", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { id } });
   });
 
@@ -137,16 +142,23 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
     ]);
     if (!(results[2]?.meta.changes > 0)) throw new AppError(404, "数据源不存在", "source_not_found");
     const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "source.delete", targetType: "source", targetId: id, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.delete", targetType: "source", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { ok: true } });
   });
 
   app.post("/api/sources/:id/refresh", async (context) => {
+    // Each refresh is an outbound request plus a D1 write burst; without a
+    // cap a script could use it to hammer arbitrary upstreams.
+    const principal = context.get("principal");
+    const limit = await consumeRateLimit(context.env, "refresh:" + principal.adminId, 30, 60_000);
+    if (!limit.allowed) {
+      context.header("retry-after", String(limit.retryAfter));
+      throw new AppError(429, "刷新过于频繁，请稍后重试", "refresh_rate_limited");
+    }
     // A deliberate admin refresh bypasses the scheduler cooldown but still
     // acquires the per-source lease, so it cannot race another refresh.
     const result = await refreshSource(context.env, context.req.param("id"), { force: true });
-    const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "source.refresh", targetType: "source", targetId: context.req.param("id"), details: result, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.refresh", targetType: "source", targetId: context.req.param("id"), details: result, requestId: context.get("requestId") });
     return context.json({ data: result });
   });
 

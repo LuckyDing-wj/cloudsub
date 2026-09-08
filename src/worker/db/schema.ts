@@ -47,14 +47,30 @@ export const sources = sqliteTable(
     lastError: text("last_error"),
     contentHash: text("content_hash"),
     refreshLease: text("refresh_lease"),
+    failureCount: integer("failure_count").notNull().default(0),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     index("idx_sources_next_refresh_at").on(table.enabled, table.nextRefreshAt),
     index("idx_sources_source_kind").on(table.sourceKind),
+    index("idx_sources_name_nocase").on(table.name),
   ],
 );
+
+/**
+ * Durable rate-limit counters. KV is eventually consistent, so a
+ * read-modify-write counter there can be bypassed by concurrent requests;
+ * D1 serialises writes, making the guarded increment below reliable enough
+ * for abuse control. See services/rate-limit.ts.
+ */
+export const rateLimits = sqliteTable("rate_limits", {
+  bucketKey: text("bucket_key").primaryKey(),
+  windowStart: integer("window_start").notNull(),
+  count: integer("count").notNull().default(0),
+  blockedUntil: integer("blocked_until"),
+  updatedAt: text("updated_at").notNull(),
+});
 
 export const sourceFetchLogs = sqliteTable(
   "source_fetch_logs",
@@ -68,7 +84,10 @@ export const sourceFetchLogs = sqliteTable(
     error: text("error"),
     createdAt: text("created_at").notNull(),
   },
-  (table) => [index("idx_source_logs_source_created").on(table.sourceId, table.createdAt)],
+  (table) => [
+    index("idx_source_logs_source_created").on(table.sourceId, table.createdAt),
+    index("idx_source_logs_status_created").on(table.status, table.createdAt),
+  ],
 );
 
 export const nodes = sqliteTable(
@@ -96,6 +115,9 @@ export const nodes = sqliteTable(
     index("idx_nodes_source_present_enabled").on(table.sourceId, table.present, table.enabled),
     index("idx_nodes_protocol_enabled").on(table.protocol, table.enabled, table.present),
     index("idx_nodes_fingerprint").on(table.fingerprint),
+    // Node list views sort by name with COLLATE NOCASE; without a matching
+    // collated index every page is a full scan + sort.
+    index("idx_nodes_name_nocase").on(table.name),
   ],
 );
 
@@ -195,5 +217,5 @@ export const auditLogs = sqliteTable(
     requestId: text("request_id"),
     createdAt: text("created_at").notNull(),
   },
-  (table) => [index("idx_audit_logs_created_at").on(table.createdAt)],
+  (table) => [index("idx_audit_logs_created_at").on(table.createdAt), index("idx_audit_logs_admin_id").on(table.adminId)],
 );

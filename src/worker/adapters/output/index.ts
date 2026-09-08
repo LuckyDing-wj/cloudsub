@@ -21,18 +21,24 @@ export function applySubscriptionRules(nodes: NormalizedNode[], rules: Subscript
     .filter((rule): rule is { compiled: NonNullable<ReturnType<typeof compileSafePattern>>; replacement: string } => rule.compiled !== null);
   const requiredTags = new Set(rules.tags ?? []);
   const seen = new Set<string>();
+  // Compile once per rule instead of once per (node, rule) pair: building a
+  // matcher allocates the VM state, which is pure overhead when repeated for
+  // thousands of nodes.
+  const includeMatcher = include ? runSafePattern(include) : undefined;
+  const excludeMatcher = exclude ? runSafePattern(exclude) : undefined;
+  const renames = rename.map((rule) => ({ matcher: runSafePattern(rule.compiled), replacement: rule.replacement }));
   const output = nodes.filter((node) => {
     if (!node.enabled || seen.has(node.fingerprint)) return false;
     if (protocols.size > 0 && !protocols.has(node.protocol.toLowerCase())) return false;
     if (requiredTags.size > 0 && ![...requiredTags].every((tag) => node.tags.includes(tag))) return false;
-    if (include && !runSafePattern(include).test(node.name)) return false;
-    if (exclude && runSafePattern(exclude).test(node.name)) return false;
+    if (includeMatcher && !includeMatcher.test(node.name)) return false;
+    if (excludeMatcher && excludeMatcher.test(node.name)) return false;
     seen.add(node.fingerprint);
     return true;
   }).map((node) => {
     let name = node.name;
-    for (const rule of rename) {
-      name = runSafePattern(rule.compiled).replace(name, rule.replacement);
+    for (const rule of renames) {
+      name = rule.matcher.replace(name, rule.replacement);
     }
     return { ...node, name, config: { ...node.config, name } };
   });
@@ -364,14 +370,18 @@ function buildSingboxConfig(nodes: NormalizedNode[]): Record<string, unknown> {
 // ─── Main renderer ───────────────────────────────────────────────────
 
 export function renderSubscription(nodes: NormalizedNode[], target: SubscriptionTarget): { body: string; contentType: string; extension: string } {
+  // JSON targets are emitted compact: pretty-printing inflated large
+  // subscriptions by roughly a third for no client benefit, and the bytes
+  // are counted against the response, the KV cache entry and the client's
+  // download every single time.
   if (target === "json") {
-    return { body: JSON.stringify({ version: 1, nodes }, null, 2), contentType: "application/json; charset=utf-8", extension: "json" };
+    return { body: JSON.stringify({ version: 1, nodes }), contentType: "application/json; charset=utf-8", extension: "json" };
   }
   if (target === "mihomo") {
     return { body: stringify(buildMihomoConfig(nodes), { lineWidth: 0 }), contentType: "application/yaml; charset=utf-8", extension: "yaml" };
   }
   if (target === "singbox") {
-    return { body: JSON.stringify(buildSingboxConfig(nodes), null, 2), contentType: "application/json; charset=utf-8", extension: "json" };
+    return { body: JSON.stringify(buildSingboxConfig(nodes)), contentType: "application/json; charset=utf-8", extension: "json" };
   }
   // raw
   const uris = nodes.map(uriForNode).filter((value): value is string => Boolean(value));

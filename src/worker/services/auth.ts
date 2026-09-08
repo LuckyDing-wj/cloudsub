@@ -2,8 +2,9 @@ import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppBindings, Env } from "../env";
-import { constantTimeEqual, hmacSha256Hex, randomToken, sha256Hex } from "../security/crypto";
+import { constantTimeEqual, hmacSha256Hex, randomToken } from "../security/crypto";
 import { AppError } from "../shared/errors";
+import { clearRateLimit, consumeRateLimit } from "./rate-limit";
 
 export const SESSION_COOKIE = "cloudsub_session";
 export const CSRF_COOKIE = "cloudsub_csrf";
@@ -60,8 +61,12 @@ export const requireAuth = createMiddleware<AppBindings>(async (context, next) =
     sessionId: session.session_id,
     csrfToken: session.csrf_token,
   });
+  // Touching last_seen_at on every request means one D1 write per API call
+  // (including reads). Throttle it: the value is only ever shown as a coarse
+  // "recently seen" signal, so a 5-minute resolution is plenty.
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   context.executionCtx.waitUntil(
-    context.env.DB.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").bind(now, session.session_id).run(),
+    context.env.DB.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ? AND last_seen_at <= ?").bind(now, session.session_id, staleBefore).run(),
   );
   await next();
 });
@@ -80,22 +85,28 @@ export const requireCsrf = createMiddleware<AppBindings>(async (context, next) =
   await next();
 });
 
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_BLOCK_MS = 15 * 60 * 1000;
+
+function loginBucket(key: string): string {
+  return "login:" + key;
+}
+
 export async function loginRateLimit(env: Env, key: string): Promise<{ allowed: boolean; retryAfter: number }> {
-  const cacheKey = "ratelimit:login:" + await sha256Hex(key);
-  const state = await env.CACHE.get<{ attempts: number; blockedUntil?: number }>(cacheKey, "json");
-  const now = Date.now();
-  if (state?.blockedUntil && state.blockedUntil > now) return { allowed: false, retryAfter: Math.ceil((state.blockedUntil - now) / 1000) };
+  const existing = await env.DB.prepare("SELECT blocked_until FROM rate_limits WHERE bucket_key = ?").bind(loginBucket(key)).first<{ blocked_until: number | null }>();
+  if (existing?.blocked_until && existing.blocked_until > Date.now()) {
+    return { allowed: false, retryAfter: Math.ceil((existing.blocked_until - Date.now()) / 1000) };
+  }
   return { allowed: true, retryAfter: 0 };
 }
 
 export async function recordLoginFailure(env: Env, key: string): Promise<void> {
-  const cacheKey = "ratelimit:login:" + await sha256Hex(key);
-  const current = await env.CACHE.get<{ attempts: number }>(cacheKey, "json");
-  const attempts = (current?.attempts ?? 0) + 1;
-  const blockedUntil = attempts >= 5 ? Date.now() + 15 * 60 * 1000 : undefined;
-  await env.CACHE.put(cacheKey, JSON.stringify({ attempts, blockedUntil }), { expirationTtl: 900 });
+  // Counting past the threshold is what arms the block: the 6th failure in
+  // the window trips `limit` and sets blocked_until for 15 minutes.
+  await consumeRateLimit(env, loginBucket(key), LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS, LOGIN_BLOCK_MS);
 }
 
 export async function clearLoginFailures(env: Env, key: string): Promise<void> {
-  await env.CACHE.delete("ratelimit:login:" + await sha256Hex(key));
+  await clearRateLimit(env, loginBucket(key));
 }

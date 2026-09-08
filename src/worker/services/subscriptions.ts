@@ -91,7 +91,12 @@ export async function generateSubscription(env: Env, token: string, requestedTar
   const nodes = applySubscriptionRules(result.results.map(rowToNode), parseRules(access.rules_json));
   const rendered = renderSubscription(nodes, target);
   const etag = '"' + await sha256Hex(rendered.body) + '"';
-  await env.CACHE.put(cacheKey, JSON.stringify({ ...rendered, etag }), { expirationTtl: cacheTtl });
+  // A KV value is capped at 25 MiB. An oversized subscription must skip the
+  // cache rather than fail the request with a 500 on the `put`.
+  const entry = JSON.stringify({ ...rendered, etag });
+  if (new TextEncoder().encode(entry).byteLength <= 20 * 1024 * 1024) {
+    await env.CACHE.put(cacheKey, entry, { expirationTtl: cacheTtl });
+  }
   await env.DB.prepare("UPDATE subscriptions SET last_generated_at = ? WHERE id = ?").bind(now, access.subscription_id).run();
   return { ...rendered, etag, name: access.slug || access.name, cacheTtl, tokenId: access.token_id };
 }

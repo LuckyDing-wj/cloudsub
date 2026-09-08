@@ -1,4 +1,12 @@
+import type { Env } from "../env";
 import { AppError } from "../shared/errors";
+
+// Public resolver used to resolve an upstream hostname before connecting.
+// Workers exposes no DNS API, so without this a public hostname whose A
+// record points at 169.254.169.254 / 127.0.0.1 (DNS rebinding) would pass
+// the literal-address checks above. Set SSRF_DNS_CHECK=0 to disable.
+const DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query";
+const DNS_CACHE_TTL_SECONDS = 300;
 
 const BLOCKED_HOSTS = new Set(["localhost", "localhost.localdomain", "metadata.google.internal"]);
 const BLOCKED_HEADERS = new Set([
@@ -138,6 +146,54 @@ export function validateUpstreamUrl(input: string): URL {
   return url;
 }
 
+function isIpLiteral(hostname: string): boolean {
+  return canonicalizeIpv4(hostname) !== undefined || hostname.includes(":");
+}
+
+async function resolveDoh(env: Env, hostname: string, type: "A" | "AAAA"): Promise<string[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("dns-timeout"), 5000);
+  try {
+    const response = await fetch(DOH_ENDPOINT + "?name=" + encodeURIComponent(hostname) + "&type=" + type, {
+      headers: { accept: "application/dns-json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("dns-http-" + response.status);
+    const payload = await response.json() as { Answer?: Array<{ data?: string }> };
+    return (payload.Answer ?? []).map((answer) => String(answer.data ?? "")).filter(Boolean);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Resolve the hostname and reject it when any answer is a private,
+ * loopback, link-local or otherwise reserved address. Results are cached in
+ * KV so a refresh cycle does not pay the extra round trip every time.
+ */
+async function assertPublicHost(env: Env, hostname: string): Promise<void> {
+  if (isIpLiteral(hostname)) return; // Literal hosts are already checked by validateUpstreamUrl.
+  if (env.SSRF_DNS_CHECK === "0") return;
+  const cacheKey = "ssrf:dns:" + hostname;
+  const cached = await env.CACHE.get(cacheKey).catch(() => null);
+  if (cached === "ok") return;
+  if (cached === "blocked") throw new AppError(422, "禁止访问私有、链路本地或保留地址", "private_address");
+
+  let answers: string[];
+  try {
+    const [ipv4, ipv6] = await Promise.all([resolveDoh(env, hostname, "A"), resolveDoh(env, hostname, "AAAA")]);
+    answers = [...ipv4, ...ipv6];
+  } catch {
+    // Fail closed: an unverifiable host is never fetched.
+    throw new AppError(502, "无法校验上游地址", "dns_resolution_failed");
+  }
+  if (answers.length === 0) throw new AppError(502, "上游地址无法解析", "dns_resolution_failed");
+
+  const blocked = answers.some((address) => isBlockedIpv4(address) || isBlockedIpv6(address));
+  await env.CACHE.put(cacheKey, blocked ? "blocked" : "ok", { expirationTtl: DNS_CACHE_TTL_SECONDS }).catch(() => undefined);
+  if (blocked) throw new AppError(422, "禁止访问私有、链路本地或保留地址", "private_address");
+}
+
 function sanitizedHeaders(input: Record<string, string> | undefined, userAgent: string | undefined): Headers {
   const headers = new Headers({ Accept: "text/plain, application/yaml, application/json;q=0.9, */*;q=0.5" });
   for (const [name, value] of Object.entries(input ?? {})) {
@@ -176,6 +232,7 @@ async function readLimitedBody(response: Response, maxBytes: number): Promise<{ 
 }
 
 export async function safeFetchText(options: {
+  env: Env;
   url: string;
   headers?: Record<string, string>;
   userAgent?: string;
@@ -186,6 +243,9 @@ export async function safeFetchText(options: {
   let url = validateUpstreamUrl(options.url);
   const maxRedirects = options.maxRedirects ?? 3;
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
+    // Every hop is re-validated: a redirect may point at a host (or a host
+    // that now resolves) inside the private ranges.
+    await assertPublicHost(options.env, url.hostname.toLowerCase().replace(/\.$/u, ""));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort("timeout"), options.timeoutMs);
     let response: Response;

@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
 import type { AppBindings } from "../env";
 import { body, maskServer, pageParams } from "../http";
-import { writeAudit } from "../services/audit";
+import { writeAuditDeferred } from "../services/audit";
+import { consumeRateLimit } from "../services/rate-limit";
 import { AppError } from "../shared/errors";
 import { nodeBatchSchema, nodeUpdateSchema } from "../validation";
 
@@ -56,24 +57,34 @@ export function registerNodeRoutes(app: Hono<AppBindings>): void {
       context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id = ?)").bind(now, current.source_id),
     ]);
     const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "node.update", targetType: "node", targetId: id, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "node.update", targetType: "node", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { id } });
   });
 
   app.post("/api/nodes/batch", async (context) => {
     const input = await body(context, nodeBatchSchema);
     if (input.enabled === undefined && input.tags === undefined) throw new AppError(422, "没有可更新的字段", "empty_update");
+    const principal = context.get("principal");
+    const limit = await consumeRateLimit(context.env, "nodes:batch:" + principal.adminId, 60, 60_000);
+    if (!limit.allowed) {
+      context.header("retry-after", String(limit.retryAfter));
+      throw new AppError(429, "操作过于频繁，请稍后重试", "batch_rate_limited");
+    }
     const placeholders = input.ids.map(() => "?").join(",");
     const nodes = await context.env.DB.prepare("SELECT id, source_id, enabled, tags_json FROM nodes WHERE id IN (" + placeholders + ")").bind(...input.ids).all<any>();
     const now = new Date().toISOString();
-    await context.env.DB.batch(nodes.results.map((node) => context.env.DB.prepare("UPDATE nodes SET enabled = ?, tags_json = ?, updated_at = ? WHERE id = ?").bind(input.enabled === undefined ? node.enabled : input.enabled ? 1 : 0, JSON.stringify(input.tags ?? JSON.parse(node.tags_json)), now, node.id)));
+    // D1 caps a batch's statements; a 100-id selection must be chunked
+    // instead of sent as one (over-sized) batch.
+    const statements = nodes.results.map((node) => context.env.DB.prepare("UPDATE nodes SET enabled = ?, tags_json = ?, updated_at = ? WHERE id = ?").bind(input.enabled === undefined ? node.enabled : input.enabled ? 1 : 0, JSON.stringify(input.tags ?? JSON.parse(node.tags_json)), now, node.id));
+    for (let offset = 0; offset < statements.length; offset += 75) {
+      await context.env.DB.batch(statements.slice(offset, offset + 75));
+    }
     const sourceIds = [...new Set(nodes.results.map((node) => node.source_id as string))];
     if (sourceIds.length) {
       const sourcePlaceholders = sourceIds.map(() => "?").join(",");
       await context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id IN (" + sourcePlaceholders + "))").bind(now, ...sourceIds).run();
     }
-    const principal = context.get("principal");
-    await writeAudit(context.env, { adminId: principal.adminId, action: "node.batch_update", targetType: "node", details: { count: nodes.results.length }, requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: principal.adminId, action: "node.batch_update", targetType: "node", details: { count: nodes.results.length }, requestId: context.get("requestId") });
     return context.json({ data: { updated: nodes.results.length } });
   });
 }

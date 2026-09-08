@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, ApiError, onSessionExpired } from "./api";
 import { copyText } from "./clipboard";
@@ -6,7 +6,7 @@ import { Modal, NoticeBar, Pagination, TokenReveal } from "./components";
 import type { Notice } from "./components";
 import { ListState } from "./components";
 import { formatTime, useAsync, useBusy, useDebounced, usePagedList } from "./hooks";
-import { validateSafePattern } from "../worker/security/regex";
+import { validatePatternLocally } from "./pattern-check";
 
 interface SystemStatus {
   initialized: boolean;
@@ -313,16 +313,15 @@ function SourcesPage() {
 
 // ─── 节点 ────────────────────────────────────────────────────────────
 
-function NodeTable({ items, onToggle, busy }: { items: NodeItem[]; onToggle: (item: NodeItem) => void; busy: boolean }) {
-  return <div className="table-wrap"><table><thead><tr><th>名称</th><th>协议</th><th>服务器</th><th>来源</th><th>启用</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong>{item.tags.length > 0 && <small>{item.tags.join(" · ")}</small>}</td><td><span className="protocol">{item.protocol}</span></td><td className="mono">{item.server}:{item.port}</td><td>{item.source_name}</td><td><button type="button" className={"switch " + (item.enabled ? "on" : "")} aria-label={item.enabled ? "停用 " + item.name : "启用 " + item.name} aria-pressed={Boolean(item.enabled)} disabled={busy} onClick={() => onToggle(item)}><span /></button></td></tr>)}</tbody></table></div>;
-}
+const NodeTable = memo(function NodeTable({ items, onToggle, busyId }: { items: NodeItem[]; onToggle: (item: NodeItem) => void; busyId: string | null }) {
+  return <div className="table-wrap"><table><thead><tr><th>名称</th><th>协议</th><th>服务器</th><th>来源</th><th>启用</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong>{item.tags.length > 0 && <small>{item.tags.join(" · ")}</small>}</td><td><span className="protocol">{item.protocol}</span></td><td className="mono">{item.server}:{item.port}</td><td>{item.source_name}</td><td><button type="button" className={"switch " + (item.enabled ? "on" : "")} aria-label={item.enabled ? "停用 " + item.name : "启用 " + item.name} aria-pressed={Boolean(item.enabled)} disabled={busyId === item.id} onClick={() => onToggle(item)}><span /></button></td></tr>)}</tbody></table></div>;
+});
 
-function NodeGroup({ title, state, onToggle, busy, page, onPage }: { title: string; state: ReturnType<typeof usePagedList<NodeItem>>; onToggle: (item: NodeItem) => void; busy: boolean; page: number; onPage: (page: number) => void }) {
-  const items = state.data?.items ?? [];
+function NodeGroup({ title, state, items, onToggle, busyId, page, onPage }: { title: string; state: ReturnType<typeof usePagedList<NodeItem>>; items: NodeItem[]; onToggle: (item: NodeItem) => void; busyId: string | null; page: number; onPage: (page: number) => void }) {
   return <div className="node-group">
     <div className="node-group-head"><h3>{title}</h3><span className="status-pill neutral">{state.data?.total ?? 0} 个节点</span></div>
     <ListState state={state} empty={items.length === 0 ? <div className="empty">该分组暂无节点。</div> : null} />
-    {items.length > 0 && <NodeTable items={items} onToggle={onToggle} busy={busy} />}
+    {items.length > 0 && <NodeTable items={items} onToggle={onToggle} busyId={busyId} />}
     <Pagination page={page} pageSize={25} total={state.data?.total ?? 0} onPage={onPage} label={title + "分页"} />
   </div>;
 }
@@ -332,7 +331,7 @@ function NodesPage() {
   const [protocol, setProtocol] = useState("");
   const [subPage, setSubPage] = useState(1);
   const [stdPage, setStdPage] = useState(1);
-  const [busy, run] = useBusy();
+  const [, run] = useBusy();
   const [notice, setNotice] = useState<Notice>(null);
   const search = useDebounced(query);
   // Search/filter changes reset both groups back to page 1 (accurate totals
@@ -341,15 +340,32 @@ function NodesPage() {
   const shared = { q: search, protocol };
   const subscriptionNodes = usePagedList<NodeItem>("/api/nodes", { ...shared, sourceKind: "subscription" }, subPage, 25);
   const standaloneNodes = usePagedList<NodeItem>("/api/nodes", { ...shared, sourceKind: "standalone" }, stdPage, 25);
+  // Toggling one switch used to refetch both groups (4 D1 queries for a
+  // single boolean). The row is patched locally instead; only a failure
+  // falls back to a reload.
+  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const withOverrides = useCallback((items: NodeItem[]) => items.map((item) => (overrides[item.id] === undefined ? item : { ...item, enabled: overrides[item.id] })), [overrides]);
+  const subscriptionItems = useMemo(() => withOverrides(subscriptionNodes.data?.items ?? []), [subscriptionNodes.data, withOverrides]);
+  const standaloneItems = useMemo(() => withOverrides(standaloneNodes.data?.items ?? []), [standaloneNodes.data, withOverrides]);
 
   async function toggle(item: NodeItem) {
+    const next = item.enabled ? 0 : 1;
     setNotice(null);
+    setOverrides((previous) => ({ ...previous, [item.id]: next }));
+    setBusyId(item.id);
     await run(async () => {
       try {
-        await api("/api/nodes/" + item.id, { method: "PUT", body: { enabled: !item.enabled } });
-        await Promise.all([subscriptionNodes.retry(), standaloneNodes.retry()]);
+        await api("/api/nodes/" + item.id, { method: "PUT", body: { enabled: next === 1 } });
       } catch (error) {
+        setOverrides((previous) => {
+          const copy = { ...previous };
+          delete copy[item.id];
+          return copy;
+        });
         setNotice({ tone: "error", text: error instanceof Error ? error.message : "更新失败" });
+      } finally {
+        setBusyId(null);
       }
     });
   }
@@ -358,8 +374,8 @@ function NodesPage() {
     <div className="panel-head"><div><p className="eyebrow">Normalized inventory</p><h2>节点</h2><p className="muted">敏感字段默认脱敏；禁用状态会在上游刷新后保留。</p></div><span className="status-pill neutral">{(subscriptionNodes.data?.total ?? 0) + (standaloneNodes.data?.total ?? 0)} 条结果</span></div>
     <NoticeBar notice={notice} onClose={() => setNotice(null)} />
     <div className="filters"><label className="sr-only" htmlFor="node-search">搜索节点名称</label><input id="node-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点名称" /><label className="sr-only" htmlFor="node-protocol">按协议筛选</label><select id="node-protocol" value={protocol} onChange={(event) => setProtocol(event.target.value)}><option value="">全部协议</option>{PROTOCOLS.map((value) => <option key={value}>{value}</option>)}</select></div>
-    <NodeGroup title="订阅节点" state={subscriptionNodes} onToggle={toggle} busy={busy} page={subPage} onPage={setSubPage} />
-    <NodeGroup title="单独节点" state={standaloneNodes} onToggle={toggle} busy={busy} page={stdPage} onPage={setStdPage} />
+    <NodeGroup title="订阅节点" state={subscriptionNodes} items={subscriptionItems} onToggle={toggle} busyId={busyId} page={subPage} onPage={setSubPage} />
+    <NodeGroup title="单独节点" state={standaloneNodes} items={standaloneItems} onToggle={toggle} busyId={busyId} page={stdPage} onPage={setStdPage} />
   </section>;
 }
 
@@ -381,7 +397,7 @@ function SubscriptionForm({ form, setForm, sources, busy, submitLabel, onSubmit 
       ...form.rename.filter((rule) => rule.pattern.trim()).map((rule, index) => ["rename[" + index + "]", rule.pattern] as [string, string]),
     ];
     for (const [field, pattern] of fields) {
-      const reason = validateSafePattern(pattern.trim());
+      const reason = validatePatternLocally(pattern.trim());
       if (reason !== null) { setRegexError(field + "：" + reason); return false; }
     }
     setRegexError(null);
@@ -421,6 +437,21 @@ function SubscriptionForm({ form, setForm, sources, busy, submitLabel, onSubmit 
     {regexError && <div className="callout error" role="alert">{regexError}</div>}
     <div className="form-actions"><span className="muted">规则保存后立即生效，并会使缓存输出失效。</span><button className="button primary" disabled={busy || !form.sourceIds.length}>{busy ? "处理中…" : submitLabel}</button></div>
   </form>;
+}
+
+// Rendering a 200k-character preview in one <pre> freezes the tab. The body
+// is paged by lines and extended on demand, which keeps the DOM small while
+// still letting the operator scroll through the whole output.
+const PREVIEW_LINES_PER_PAGE = 400;
+
+function PreviewBody({ body }: { body: string }) {
+  const lines = useMemo(() => body.split("\n"), [body]);
+  const [visible, setVisible] = useState(PREVIEW_LINES_PER_PAGE);
+  useEffect(() => { setVisible(PREVIEW_LINES_PER_PAGE); }, [body]);
+  return <div className="preview-body">
+    <pre>{lines.slice(0, visible).join("\n")}</pre>
+    {visible < lines.length && <button className="button ghost small" onClick={() => setVisible((value) => value + PREVIEW_LINES_PER_PAGE)}>显示更多（剩余 {lines.length - visible} 行）</button>}
+  </div>;
 }
 
 function SubscriptionsPage() {
@@ -565,7 +596,7 @@ function SubscriptionsPage() {
     <div className="card-list">{items.map((item) => <article className="subscription-card" key={item.id}><div className="sub-icon">⌁</div><div className="sub-copy"><div><h3>{item.name}</h3><span className={"status-pill " + (item.enabled ? "good" : "neutral")}>{item.enabled ? "运行中" : "已暂停"}</span></div><p><span className="protocol">{item.default_target}</span> · {item.sourceIds.length} 个数据源 · 令牌 {item.token_prefix ?? "—"}••••</p><small>最近访问：{formatTime(item.last_access_at)}</small></div><div className="actions"><button className="button ghost small" disabled={busy} onClick={() => void openEdit(item)}>编辑</button><button className="button ghost small" disabled={busy} onClick={() => void showPreview(item)}>预览</button><button className="button ghost small" disabled={busy} onClick={() => void rotate(item)}>轮换令牌</button><button className="button danger small" disabled={busy} onClick={() => void remove(item)}>删除</button></div></article>)}</div>
     <ListState state={list} empty={items.length === 0 ? <div className="empty">还没有订阅。选择数据源后创建第一条。</div> : null} />
     <Pagination page={page} pageSize={25} total={list.data?.total ?? 0} onPage={setPage} label="订阅分页" />
-    {preview && <Modal title={preview.error ? "预览失败" : preview.nodeCount + " 个节点"} eyebrow="输出预览" onClose={() => setPreview(null)}>{preview.error ? <div className="callout error" role="alert">{preview.error}</div> : <pre>{preview.body}</pre>}</Modal>}
+    {preview && <Modal title={preview.error ? "预览失败" : preview.nodeCount + " 个节点"} eyebrow="输出预览" onClose={() => setPreview(null)}>{preview.error ? <div className="callout error" role="alert">{preview.error}</div> : <PreviewBody body={preview.body} />}</Modal>}
   </section>;
 }
 

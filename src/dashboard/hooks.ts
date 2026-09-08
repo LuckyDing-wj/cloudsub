@@ -47,7 +47,13 @@ export interface Paged<T> {
  */
 export function usePagedList<T>(path: string, query: Record<string, string>, page: number, pageSize: number): AsyncState<Paged<T>> & { setPage: (page: number) => void } {
   const [currentPage, setCurrentPage] = useState(page);
-  useEffect(() => { setCurrentPage(page); }, [page]);
+  // Adjusting state during render (instead of in an effect) keeps the two in
+  // sync without an extra commit + second fetch.
+  const [syncedPage, setSyncedPage] = useState(page);
+  if (page !== syncedPage) {
+    setSyncedPage(page);
+    setCurrentPage(page);
+  }
   const params = new URLSearchParams({ ...query, page: String(currentPage), pageSize: String(pageSize) });
   const state = useAsync<Paged<T>>(
     async () => {

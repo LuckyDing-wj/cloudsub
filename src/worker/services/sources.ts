@@ -18,6 +18,7 @@ interface SourceRow {
   timeout_ms: number;
   last_attempt_at: string | null;
   content_hash: string | null;
+  failure_count: number;
 }
 
 interface SourcePayload {
@@ -45,6 +46,7 @@ async function sourceContent(env: Env, source: SourceRow): Promise<{ text: strin
   const upstreamUrl = payload.url ?? source.url;
   if (!upstreamUrl) throw new AppError(422, "数据源缺少上游地址", "missing_source_url");
   return safeFetchText({
+    env,
     url: upstreamUrl,
     headers: payload.headers,
     userAgent: source.user_agent ?? "CloudSub/0.1",
@@ -102,6 +104,18 @@ async function releaseRefreshLease(env: Env, sourceId: string, lease: string): P
 }
 
 /**
+ * Exponential backoff for a failing source, capped at 6h.
+ *
+ * Without this a permanently broken URL sorts first in the due-source query
+ * (NULLS FIRST, never advancing next_refresh_at) and starves every other
+ * source in the LIMIT 20 window. Failing sources now get pushed back.
+ */
+function failureBackoffIso(failureCount: number): string {
+  const backoffMs = Math.min(30_000 * 2 ** Math.max(0, failureCount - 1), 6 * 60 * 60 * 1000);
+  return new Date(Date.now() + backoffMs).toISOString();
+}
+
+/**
  * Promote the staged node set into `nodes` atomically.
  *
  * The entire promotion — demoting old rows, upserting from staging (which
@@ -120,14 +134,14 @@ async function promoteStagedNodes(env: Env, sourceId: string, source: SourceRow,
       "SELECT id, source_id, fingerprint, name, protocol, server, port, config_json, tags_json, raw_uri, enabled, present, created_at, updated_at FROM nodes_staging WHERE source_id = ? " +
       "ON CONFLICT(source_id, fingerprint) DO UPDATE SET protocol = excluded.protocol, server = excluded.server, port = excluded.port, config_json = excluded.config_json, raw_uri = excluded.raw_uri, present = 1, updated_at = excluded.updated_at",
     ).bind(sourceId),
-    env.DB.prepare("UPDATE sources SET last_success_at = ?, last_error = NULL, content_hash = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(now, contentHash, nextRefresh, now, sourceId),
+    env.DB.prepare("UPDATE sources SET last_success_at = ?, last_error = NULL, content_hash = ?, next_refresh_at = ?, failure_count = 0, updated_at = ? WHERE id = ?").bind(now, contentHash, nextRefresh, now, sourceId),
     env.DB.prepare("INSERT INTO source_fetch_logs (id, source_id, status, node_count, bytes, duration_ms, error, created_at) VALUES (?, ?, 'success', ?, ?, ?, NULL, ?)").bind(crypto.randomUUID(), sourceId, nodes.length, content.bytes, Date.now() - started, now),
     env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id = ?)").bind(now, sourceId),
   ]);
 }
 
 export async function refreshSource(env: Env, sourceId: string, options: { force?: boolean } = {}): Promise<{ nodeCount: number; bytes: number; changed: boolean }> {
-  const source = await env.DB.prepare("SELECT id, name, type, source_kind, url, payload_encrypted, user_agent, enabled, refresh_interval, timeout_ms, last_attempt_at, content_hash FROM sources WHERE id = ? LIMIT 1").bind(sourceId).first<SourceRow>();
+  const source = await env.DB.prepare("SELECT id, name, type, source_kind, url, payload_encrypted, user_agent, enabled, refresh_interval, timeout_ms, last_attempt_at, content_hash, failure_count FROM sources WHERE id = ? LIMIT 1").bind(sourceId).first<SourceRow>();
   if (!source) throw new AppError(404, "数据源不存在", "source_not_found");
   if (!source.enabled && !options.force) throw new AppError(409, "数据源已停用", "source_disabled");
   if (source.last_attempt_at && !options.force && Date.now() - new Date(source.last_attempt_at).getTime() < 30_000) {
@@ -160,7 +174,7 @@ export async function refreshSource(env: Env, sourceId: string, options: { force
       // subscription output stays valid). Only bookkeeping is updated.
       const nextRefresh = new Date(Date.now() + Math.max(5, source.refresh_interval) * 60_000).toISOString();
       await env.DB.batch([
-        env.DB.prepare("UPDATE sources SET last_success_at = ?, last_error = NULL, content_hash = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(now, contentHash, nextRefresh, now, sourceId),
+        env.DB.prepare("UPDATE sources SET last_success_at = ?, last_error = NULL, content_hash = ?, next_refresh_at = ?, failure_count = 0, updated_at = ? WHERE id = ?").bind(now, contentHash, nextRefresh, now, sourceId),
         env.DB.prepare("INSERT INTO source_fetch_logs (id, source_id, status, node_count, bytes, duration_ms, error, created_at) VALUES (?, ?, 'success', ?, ?, ?, NULL, ?)").bind(crypto.randomUUID(), sourceId, nodes.length, content.bytes, Date.now() - started, now),
       ]);
       return { nodeCount: nodes.length, bytes: content.bytes, changed: false };
@@ -176,8 +190,9 @@ export async function refreshSource(env: Env, sourceId: string, options: { force
     // Any failure leaves the previously promoted node set fully intact:
     // staging writes never touch `nodes`, and the promotion batch is atomic.
     const message = publicErrorMessage(error).slice(0, 500);
+    const failureCount = Math.min((source.failure_count ?? 0) + 1, 8);
     await env.DB.batch([
-      env.DB.prepare("UPDATE sources SET last_error = ?, updated_at = ? WHERE id = ?").bind(message, now, sourceId),
+      env.DB.prepare("UPDATE sources SET last_error = ?, failure_count = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(message, failureCount, failureBackoffIso(failureCount), now, sourceId),
       env.DB.prepare("INSERT INTO source_fetch_logs (id, source_id, status, node_count, bytes, duration_ms, error, created_at) VALUES (?, ?, 'error', 0, 0, ?, ?, ?)").bind(crypto.randomUUID(), sourceId, Date.now() - started, message, now),
     ]);
     throw error;
@@ -188,15 +203,32 @@ export async function refreshSource(env: Env, sourceId: string, options: { force
   }
 }
 
+/**
+ * Run `worker` over every item with a bounded pool. Refreshes are dominated
+ * by upstream latency (up to 30s each), so a serial loop burns the whole
+ * invocation budget; a small pool keeps wall-clock time bounded while still
+ * protecting D1 from a burst of concurrent promotion batches.
+ */
+async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
 export async function refreshDueSources(env: Env): Promise<void> {
   const now = new Date().toISOString();
-  // Refresh due sources — process in batches of 10, sorted by next_refresh_at
   const result = await env.DB.prepare(
     "SELECT id FROM sources WHERE enabled = 1 AND type = 'url' AND (next_refresh_at IS NULL OR next_refresh_at <= ?) ORDER BY next_refresh_at ASC NULLS FIRST LIMIT 20",
   ).bind(now).all<{ id: string }>();
-  for (const source of result.results) {
+  await mapWithConcurrency(result.results, 4, async (source) => {
     try { await refreshSource(env, source.id); } catch { /* The refresh service records a sanitized failure log. */ }
-  }
+  });
   // Clean up expired sessions
   await env.DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run();
   // Clean up old fetch logs (keep last 7 days)

@@ -3,8 +3,9 @@ import type { AppBindings } from "../env";
 import { body } from "../http";
 import { constantTimeEqual, sha256Hex } from "../security/crypto";
 import { hashPassword, verifyPassword } from "../security/password";
-import { writeAudit } from "../services/audit";
+import { writeAuditDeferred } from "../services/audit";
 import { createSession as startSession, loginRateLimit, recordLoginFailure, clearLoginFailures as clearFailures, setSessionCookies } from "../services/auth";
+import { consumeRateLimit } from "../services/rate-limit";
 import { generateSubscription } from "../services/subscriptions";
 import { AppError } from "../shared/errors";
 import { loginSchema, setupSchema } from "../validation";
@@ -51,7 +52,7 @@ export function registerPublicRoutes(app: Hono<AppBindings>): void {
     ]);
     const session = await startSession(context.env, adminId);
     setSessionCookies(context, session);
-    await writeAudit(context.env, { adminId, action: "system.initialize", targetType: "system", requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId, action: "system.initialize", targetType: "system", requestId: context.get("requestId") });
     return context.json({ data: { username: input.username, csrfToken: session.csrfToken } }, 201);
   });
 
@@ -72,17 +73,19 @@ export function registerPublicRoutes(app: Hono<AppBindings>): void {
     await clearFailures(context.env, rateKey);
     const session = await startSession(context.env, admin.id);
     setSessionCookies(context, session);
-    await writeAudit(context.env, { adminId: admin.id, action: "auth.login", targetType: "session", requestId: context.get("requestId") });
+    writeAuditDeferred(context, { adminId: admin.id, action: "auth.login", targetType: "session", requestId: context.get("requestId") });
     return context.json({ data: { username: admin.username, csrfToken: session.csrfToken } });
   });
 
   app.get("/sub/:token", async (context) => {
     const token = context.req.param("token");
     const ip = context.req.header("cf-connecting-ip") ?? "unknown";
-    const rateKey = "ratelimit:sub:" + await sha256Hex(ip);
-    const hits = Number(await context.env.CACHE.get(rateKey)) || 0;
-    if (hits >= 120) throw new AppError(429, "请求过于频繁", "subscription_rate_limited");
-    await context.env.CACHE.put(rateKey, String(hits + 1), { expirationTtl: 60 });
+    const rateKey = "sub:" + await sha256Hex(ip);
+    const limit = await consumeRateLimit(context.env, rateKey, 120, 60_000);
+    if (!limit.allowed) {
+      context.header("retry-after", String(limit.retryAfter));
+      throw new AppError(429, "请求过于频繁", "subscription_rate_limited");
+    }
     const result = await generateSubscription(context.env, token, context.req.query("target"));
     context.executionCtx.waitUntil(context.env.DB.prepare("UPDATE subscription_tokens SET last_access_at = ? WHERE id = ?").bind(new Date().toISOString(), result.tokenId).run());
     const headers = {
