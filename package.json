@@ -58,6 +58,12 @@
       },
       "INITIAL_ADMIN_TOKEN": {
         "description": "Optional setup token. If set, enter it during first-time initialization."
+      },
+      "TELEGRAM_BOT_TOKEN": {
+        "description": "Optional Telegram bot token used to send refresh-failure alerts."
+      },
+      "TELEGRAM_CHAT_ID": {
+        "description": "Optional Telegram chat id that receives refresh-failure alerts."
       }
     }
   }

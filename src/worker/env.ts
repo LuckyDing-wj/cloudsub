@@ -12,6 +12,9 @@ export interface Env {
   INITIAL_ADMIN_TOKEN?: string;
   /** Set to "0" to skip DNS pre-resolution in the SSRF filter. */
   SSRF_DNS_CHECK?: string;
+  /** Optional Telegram bot token/chat id: when both are set, refresh failures alert to the chat. */
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
 }
 
 export interface SessionPrincipal {

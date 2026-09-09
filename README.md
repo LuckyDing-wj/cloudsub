@@ -70,6 +70,7 @@
 |------|------|
 | `INITIAL_ADMIN_TOKEN` | 为首次初始化增加一层部署侧验证（必须填对才能创建管理员） |
 | `SSRF_DNS_CHECK` | 设为 `0` 可关闭上游地址的 DNS 预解析校验（默认开启） |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | 同时设置后，数据源刷新失败（每个故障周期的首次）推送 Telegram 机器人告警 |
 
 除上述密钥外，`wrangler.jsonc` 的 `vars` 还包含 `APP_NAME` / `SESSION_TTL` / `SUB_CACHE_TTL` / `MAX_SOURCE_SIZE`，按需调整。
 
