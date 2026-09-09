@@ -14,7 +14,6 @@ interface SessionRow {
   admin_id: string;
   username: string;
   csrf_token: string;
-  expires_at: string;
 }
 
 export async function createSession(env: Env, adminId: string): Promise<{ token: string; csrfToken: string; expiresAt: string }> {
@@ -25,8 +24,8 @@ export async function createSession(env: Env, adminId: string): Promise<{ token:
   const ttl = Math.max(900, Math.min(Number(env.SESSION_TTL) || 604_800, 2_592_000));
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
   await env.DB.prepare(
-    "INSERT INTO sessions (id, admin_id, token_hash, csrf_token, expires_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).bind(crypto.randomUUID(), adminId, await hmacSha256Hex(env.APP_SECRET, token), csrfToken, expiresAt, now.toISOString(), now.toISOString()).run();
+    "INSERT INTO sessions (id, admin_id, token_hash, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind(crypto.randomUUID(), adminId, await hmacSha256Hex(env.APP_SECRET, token), csrfToken, expiresAt, now.toISOString()).run();
   return { token, csrfToken, expiresAt };
 }
 
@@ -61,13 +60,6 @@ export const requireAuth = createMiddleware<AppBindings>(async (context, next) =
     sessionId: session.session_id,
     csrfToken: session.csrf_token,
   });
-  // Touching last_seen_at on every request means one D1 write per API call
-  // (including reads). Throttle it: the value is only ever shown as a coarse
-  // "recently seen" signal, so a 5-minute resolution is plenty.
-  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  context.executionCtx.waitUntil(
-    context.env.DB.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ? AND last_seen_at <= ?").bind(now, session.session_id, staleBefore).run(),
-  );
   await next();
 });
 

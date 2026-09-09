@@ -16,7 +16,6 @@ export const sessions = sqliteTable(
     tokenHash: text("token_hash").notNull(),
     csrfToken: text("csrf_token").notNull(),
     expiresAt: text("expires_at").notNull(),
-    lastSeenAt: text("last_seen_at").notNull(),
     createdAt: text("created_at").notNull(),
   },
   (table) => [uniqueIndex("sessions_token_hash_unique").on(table.tokenHash), index("idx_sessions_expires_at").on(table.expiresAt)],
@@ -151,16 +150,6 @@ export const nodesStaging = sqliteTable(
   ],
 );
 
-export const templates = sqliteTable("templates", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  target: text("target").notNull(),
-  content: text("content").notNull(),
-  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
-
 export const subscriptions = sqliteTable("subscriptions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -168,7 +157,6 @@ export const subscriptions = sqliteTable("subscriptions", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   defaultTarget: text("default_target", { enum: ["raw", "mihomo", "singbox", "json"] }).notNull().default("mihomo"),
   rulesJson: text("rules_json").notNull().default("{}"),
-  templateId: text("template_id").references(() => templates.id, { onDelete: "set null" }),
   revision: integer("revision").notNull().default(1),
   expiresAt: text("expires_at"),
   cacheTtl: integer("cache_ttl").notNull().default(300),

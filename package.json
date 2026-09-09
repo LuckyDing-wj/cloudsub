@@ -15,6 +15,7 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "validate:render": "tsx scripts/validate-rendered.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

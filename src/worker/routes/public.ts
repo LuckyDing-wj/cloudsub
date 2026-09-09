@@ -48,7 +48,6 @@ export function registerPublicRoutes(app: Hono<AppBindings>): void {
     await context.env.DB.batch([
       context.env.DB.prepare("INSERT INTO admins (id, username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").bind(adminId, input.username, await hashPassword(input.password), now, now),
       context.env.DB.prepare("INSERT INTO settings (key, value_json, updated_at) VALUES ('system', ?, ?)").bind(JSON.stringify({ timezone: "UTC", initializedAt: now }), now),
-      context.env.DB.prepare("INSERT INTO templates (id, name, target, content, is_default, created_at, updated_at) VALUES (?, 'Mihomo 默认模板', 'mihomo', 'proxies: []', 1, ?, ?)").bind(crypto.randomUUID(), now, now),
     ]);
     const session = await startSession(context.env, adminId);
     setSessionCookies(context, session);
