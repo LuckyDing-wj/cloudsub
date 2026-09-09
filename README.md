@@ -2,7 +2,7 @@
 
 > 部署在 Cloudflare Workers 上的订阅节点管理与分发系统。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/LYISTR2/Cloudsub)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/LuckyDing-wj/cloudsub)
 
 ## 功能概览
 
@@ -44,6 +44,12 @@
 点击 README 顶部的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 后按向导完成部署：Cloudflare 会从本仓库创建项目，构建前端、应用 D1 migrations 后发布 Worker。
 
 无需事先创建资源：`wrangler.jsonc` **故意不写** `database_id` / KV `id`，Wrangler 会在部署时按名称（`cloudsub` / `CACHE`）自动开通缺失的 D1 与 KV，并应用 migrations。账号里已存在同名资源时会直接复用。
+
+> 一键部署走的是 Workers Builds，通常只执行 build + `wrangler deploy`。若部署后
+> `GET /api/system/status` 返回 `migrationsReady: false`（表还没建），补跑一次：
+> ```bash
+> npx wrangler d1 migrations apply DB --remote
+> ```
 
 > 如果你 fork 后想把资源固定下来，可以手动创建并回填 ID：
 > ```bash
