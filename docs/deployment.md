@@ -2,7 +2,20 @@
 
 ## Deploy to Cloudflare
 
-公开仓库可使用 README 中的按钮部署。`wrangler.jsonc` 只声明资源绑定和默认资源名，不包含账户专属 ID；Wrangler 4 会为部署者自动配置 D1 与 KV。
+公开仓库可使用 README 中的按钮部署，但**必须先替换资源 ID**。
+
+`wrangler.jsonc` 里的 `d1_databases[0].database_id` 与 `kv_namespaces[0].id` 是**账号专属**的：直接沿用仓库里的值，部署会以
+`D1 binding 'DB' references database '<id>' which was not found (code: 10181)`
+或 KV 找不到命名空间而失败。Wrangler 不会自动改写已存在的 ID。
+
+替换步骤：
+
+```bash
+npx wrangler d1 create cloudsub          # 复制返回的 database_id
+npx wrangler kv namespace create CACHE   # 复制返回的 id
+```
+
+把两个值填入 `wrangler.jsonc` 后提交，再点部署按钮（或运行 `npm run deploy`）。
 
 `package.json` 的部署命令为：
 
@@ -33,11 +46,11 @@ wrangler deploy
 
 ## GitHub Actions
 
-`ci.yml` 会对 Pull Request 和主分支运行 lint、类型检查、Workers 测试与生产构建。`deploy.yml` 只支持手动触发，需要仓库 Secrets：
+`ci.yml` 会对 Pull Request 和主分支运行 lint、类型检查、Workers 测试与生产构建。`deploy.yml` 只支持手动触发（`workflow_dispatch`），需要仓库 Secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
 ## 备份与恢复
 
-CloudSub 0.1 不提供应用内备份界面。生产环境应使用 Cloudflare 的 D1 Time Travel/导出能力，并在密钥管理系统中单独备份 `DATA_ENCRYPTION_KEY`。恢复时先恢复 D1，再绑定同一密钥；更换密钥前必须完成数据重加密迁移。
+CloudSub 0.2 不提供应用内备份界面。生产环境应使用 Cloudflare 的 D1 Time Travel/导出能力，并在密钥管理系统中单独备份 `DATA_ENCRYPTION_KEY`。恢复时先恢复 D1，再绑定同一密钥；更换密钥前必须完成数据重加密迁移。

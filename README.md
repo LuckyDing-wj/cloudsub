@@ -41,7 +41,15 @@
 
 ### Cloudflare 一键部署
 
-点击 README 顶部的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 后按向导完成部署。Cloudflare 会从本仓库创建项目，自动配置 Worker、D1 数据库和 KV 命名空间，并使用仓库中的 `build` / `deploy` 脚本构建前端、应用 D1 migrations 后发布。
+点击 README 顶部的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 后按向导完成部署：Cloudflare 会从本仓库创建项目，构建前端、应用 D1 migrations 后发布 Worker。
+
+> **部署前必做**：`wrangler.jsonc` 中的 `database_id` 与 KV `id` 是**账号专属**的。仓库里提交的是维护者账号的资源 ID，直接部署会报
+> `D1 binding 'DB' references database '<id>' which was not found [code: 10181]`（KV 同理）。
+> 请先替换成自己账号的资源 ID：
+> ```bash
+> npx wrangler d1 create cloudsub          # 复制 database_id
+> npx wrangler kv namespace create CACHE   # 复制 id
+> ```
 
 部署向导会要求配置两个互不相同的随机密钥：
 
@@ -112,11 +120,16 @@
 
 ### GitHub Actions 自动部署
 
-在仓库 Settings → Secrets 中配置：
+仓库已内置两个 workflow：
+
+- `ci.yml` — 推送到 `main` 或提交 PR 时自动运行 lint、类型检查、测试与构建
+- `deploy.yml` — 手动触发（`workflow_dispatch`），执行 `npm run build` → `wrangler d1 migrations apply DB --remote` → `wrangler deploy`
+
+在仓库 Settings → Secrets and variables → Actions 中配置：
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
-然后在 Actions 页面手动触发 `Deploy to Cloudflare` workflow。
+然后在 Actions 页面选择 **Deploy to Cloudflare** → Run workflow。
 
 ## 订阅地址格式
 
