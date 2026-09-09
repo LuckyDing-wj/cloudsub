@@ -157,4 +157,28 @@ describe("CloudSub API lifecycle", () => {
     expect(garbage.status).toBe(422);
     expect(await garbage.json()).toMatchObject({ error: { code: "invalid_standalone_uri" } });
   });
+
+  it("locks a login key after five failed attempts", async () => {
+    // Runs last on purpose: lockout poisons the shared per-(IP, username)
+    // throttle key, so it must not precede the other admin logins.
+    const wrong = { username: "admin", password: "wrong password" };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await workerRequest("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(wrong),
+      });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_credentials" } });
+    }
+
+    // Even the correct password is now refused while the key is locked.
+    const locked = await workerRequest("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "correct horse battery staple" }),
+    });
+    expect(locked.status).toBe(429);
+    expect(await locked.json()).toMatchObject({ error: { code: "login_throttled" } });
+  });
 });

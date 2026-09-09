@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { decryptJson, randomToken, sha256Hex } from "../security/crypto";
 import { safeFetchText } from "../security/safe-fetch";
 import { AppError, publicErrorMessage } from "../shared/errors";
+import { notifySourceFailure, sourceFailureText } from "./notify";
 
 interface SourceRow {
   id: string;
@@ -191,10 +192,16 @@ export async function refreshSource(env: Env, sourceId: string, options: { force
     // staging writes never touch `nodes`, and the promotion batch is atomic.
     const message = publicErrorMessage(error).slice(0, 500);
     const failureCount = Math.min((source.failure_count ?? 0) + 1, 8);
+    const nextRetry = failureBackoffIso(failureCount);
     await env.DB.batch([
-      env.DB.prepare("UPDATE sources SET last_error = ?, failure_count = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(message, failureCount, failureBackoffIso(failureCount), now, sourceId),
+      env.DB.prepare("UPDATE sources SET last_error = ?, failure_count = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(message, failureCount, nextRetry, now, sourceId),
       env.DB.prepare("INSERT INTO source_fetch_logs (id, source_id, status, node_count, bytes, duration_ms, error, created_at) VALUES (?, ?, 'error', 0, 0, ?, ?, ?)").bind(crypto.randomUUID(), sourceId, Date.now() - started, message, now),
     ]);
+    // Alert once when a failure burst starts (0 -> 1). Re-alerting on every
+    // backoff step would flood the chat for a source that stays dead.
+    if (failureCount === 1) {
+      await notifySourceFailure(env, sourceFailureText(source.name, message, nextRetry)).catch(() => { /* an alert must never mask the refresh error */ });
+    }
     throw error;
   } finally {
     // Release only if the lease is still ours (an expired lease taken over
@@ -234,4 +241,7 @@ export async function refreshDueSources(env: Env): Promise<void> {
   // Clean up old fetch logs (keep last 7 days)
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   await env.DB.prepare("DELETE FROM source_fetch_logs WHERE created_at <= ?").bind(cutoff).run();
+  // Clean up login throttle rows older than 24h (fresh ones matter, stale ones accumulate)
+  const loginCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare("DELETE FROM login_attempts WHERE updated_at <= ?").bind(loginCutoff).run();
 }

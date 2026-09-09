@@ -35,6 +35,46 @@ export function setSessionCookies(context: Context<AppBindings>, session: { toke
   setCookie(context, CSRF_COOKIE, session.csrfToken, { ...common, httpOnly: false });
 }
 
+/**
+ * Per-(IP, username) login throttling, persisted in D1.
+ *
+ * Brute-force protection for the single-admin login path: five failed
+ * attempts within a 15-minute window lock the key. The lock check runs
+ * BEFORE PBKDF2 verification, so a locked key costs no CPU — keeping the
+ * login path inside the Workers free-tier 10 ms/request budget.
+ */
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
+
+export function loginThrottleKey(clientIp: string | undefined, username: string): string {
+  // usernames are restricted to [A-Za-z0-9_.-], so `|` cannot collide.
+  return (clientIp ?? "unknown") + "|" + username;
+}
+
+export async function isLoginLocked(env: Env, key: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT locked_until FROM login_attempts WHERE key = ?")
+    .bind(key).first<{ locked_until: string | null }>();
+  return Boolean(row?.locked_until && row.locked_until > new Date().toISOString());
+}
+
+export async function recordLoginFailure(env: Env, key: string): Promise<void> {
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - LOCKOUT_MS).toISOString();
+  const prior = await env.DB.prepare("SELECT attempts, updated_at FROM login_attempts WHERE key = ?")
+    .bind(key).first<{ attempts: number; updated_at: string }>();
+  // A key whose last attempt predates the lock window starts counting fresh.
+  const count = prior && prior.updated_at >= windowStart ? prior.attempts + 1 : 1;
+  const lockedUntil = count >= MAX_LOGIN_ATTEMPTS ? new Date(now.getTime() + LOCKOUT_MS).toISOString() : null;
+  await env.DB.prepare(
+    "INSERT INTO login_attempts (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT(key) DO UPDATE SET attempts = excluded.attempts, locked_until = excluded.locked_until, updated_at = excluded.updated_at",
+  ).bind(key, count, lockedUntil, now.toISOString()).run();
+}
+
+export async function clearLoginFailures(env: Env, key: string): Promise<void> {
+  await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(key).run();
+}
+
 export function clearSessionCookies(context: Context<AppBindings>): void {
   const secure = new URL(context.req.url).protocol === "https:";
   deleteCookie(context, SESSION_COOKIE, { path: "/", secure });

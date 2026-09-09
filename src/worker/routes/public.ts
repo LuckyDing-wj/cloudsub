@@ -3,7 +3,7 @@ import type { AppBindings } from "../env";
 import { body } from "../http";
 import { constantTimeEqual } from "../security/crypto";
 import { hashPassword, verifyPassword } from "../security/password";
-import { createSession as startSession, setSessionCookies } from "../services/auth";
+import { createSession as startSession, clearLoginFailures, isLoginLocked, loginThrottleKey, recordLoginFailure, setSessionCookies } from "../services/auth";
 import { generateSubscription } from "../services/subscriptions";
 import { AppError } from "../shared/errors";
 import { loginSchema, setupSchema } from "../validation";
@@ -54,10 +54,16 @@ export function registerPublicRoutes(app: Hono<AppBindings>): void {
 
   app.post("/api/auth/login", async (context) => {
     const input = await body(context, loginSchema);
+    const throttleKey = loginThrottleKey(context.req.header("cf-connecting-ip"), input.username);
+    if (await isLoginLocked(context.env, throttleKey)) {
+      throw new AppError(429, "尝试次数过多，请稍后再试", "login_throttled");
+    }
     const admin = await context.env.DB.prepare("SELECT id, username, password_hash FROM admins WHERE username = ? LIMIT 1").bind(input.username).first<{ id: string; username: string; password_hash: string }>();
     if (!admin || !(await verifyPassword(input.password, admin.password_hash))) {
+      await recordLoginFailure(context.env, throttleKey);
       throw new AppError(401, "用户名或密码错误", "invalid_credentials");
     }
+    await clearLoginFailures(context.env, throttleKey);
     const session = await startSession(context.env, admin.id);
     setSessionCookies(context, session);
     return context.json({ data: { username: admin.username, csrfToken: session.csrfToken } });
