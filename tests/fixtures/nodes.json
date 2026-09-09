@@ -14,7 +14,6 @@
       "skip-cert-verify": false,
       "alpn": ["h2", "http/1.1"]
     },
-    "tags": ["premium"],
     "enabled": true,
     "fingerprint": "fixture-vless"
   },
@@ -24,7 +23,6 @@
     "server": "ss.example.com",
     "port": 8388,
     "config": { "type": "ss", "cipher": "aes-128-gcm", "password": "ss-secret", "plugin": "obfs-local;obfs=http" },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-ss"
   },
@@ -42,7 +40,6 @@
       "network": "ws",
       "ws-opts": { "path": "/vm", "headers": { "Host": "vm.example.com" } }
     },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-vmess"
   },
@@ -52,7 +49,6 @@
     "server": "tr.example.com",
     "port": 443,
     "config": { "type": "trojan", "password": "tr-secret", "tls": true, "sni": "tr.example.com" },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-trojan"
   },
@@ -62,7 +58,6 @@
     "server": "hy2.example.com",
     "port": 443,
     "config": { "type": "hysteria2", "password": "hy-secret", "obfs": "salamander", "obfs-password": "obfspass", "up": "100", "down": "200", "tls": true, "sni": "hy2.example.com" },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-hy2"
   },
@@ -72,7 +67,6 @@
     "server": "tuic.example.com",
     "port": 443,
     "config": { "type": "tuic", "uuid": "550e8400-e29b-41d4-a716-446655440002", "password": "tuic-pass", "congestion-controller": "bbr", "tls": true, "sni": "tuic.example.com" },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-tuic"
   },
@@ -93,7 +87,6 @@
       "idle-session-timeout": "60s",
       "min-idle-session": 2
     },
-    "tags": [],
     "enabled": true,
     "fingerprint": "fixture-anytls"
   }

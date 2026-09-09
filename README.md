@@ -226,7 +226,9 @@ migrations/
 ├── 0002_performance_indexes.sql
 ├── 0003_source_kind.sql
 ├── 0004_refresh_safety.sql       # 刷新租约 + nodes_staging
-└── 0005_performance_ratelimit.sql # 索引 / failure_count / rate_limits
+├── 0005_performance_ratelimit.sql # 索引 / failure_count
+├── 0006_drop_unused.sql          # 拆除 templates 等无读方 schema
+└── 0007_simplify_personal.sql    # 拆除 tags / 审计日志 / 限流
 ```
 
 ## 开发
