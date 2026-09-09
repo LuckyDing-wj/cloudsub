@@ -23,7 +23,7 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-export async function completeNode(input: Omit<NormalizedNode, "fingerprint" | "tags" | "enabled"> & Partial<Pick<NormalizedNode, "tags" | "enabled">>): Promise<NormalizedNode> {
+export async function completeNode(input: Omit<NormalizedNode, "fingerprint" | "enabled"> & Partial<Pick<NormalizedNode, "enabled">>): Promise<NormalizedNode> {
   const identity = {
     protocol: input.protocol.toLowerCase(),
     server: input.server.toLowerCase(),
@@ -33,7 +33,6 @@ export async function completeNode(input: Omit<NormalizedNode, "fingerprint" | "
   return {
     ...input,
     protocol: input.protocol.toLowerCase(),
-    tags: input.tags ?? [],
     enabled: input.enabled ?? true,
     fingerprint: await sha256Hex(JSON.stringify(identity)),
   };

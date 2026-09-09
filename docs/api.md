@@ -50,7 +50,6 @@ POST   /api/subscriptions/:id/invalidate-cache
 
 GET /api/settings
 PUT /api/settings
-GET /api/audit-logs
 ```
 
 列表接口使用 `page` 与 `pageSize`，最大每页 100 条。节点列表额外支持 `q`、`protocol` 与 `sourceId`。

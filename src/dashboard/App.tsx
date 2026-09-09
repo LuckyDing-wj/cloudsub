@@ -50,7 +50,6 @@ interface NodeItem {
   source_name: string;
   source_kind: "subscription" | "standalone";
   enabled: number;
-  tags: string[];
 }
 
 interface SubscriptionDetail {
@@ -68,7 +67,6 @@ type SubscriptionTarget = "raw" | "mihomo" | "singbox" | "json";
 
 interface SubscriptionRules {
   protocols?: string[];
-  tags?: string[];
   includeName?: string;
   excludeName?: string;
   sortBy?: "name" | "protocol" | "source";
@@ -109,7 +107,6 @@ const navigation = [
   { path: "/sources", label: "数据源", icon: "↥" },
   { path: "/nodes", label: "节点", icon: "◉" },
   { path: "/subscriptions", label: "订阅", icon: "§" },
-  { path: "/logs", label: "日志", icon: "≡" },
   { path: "/settings", label: "设置", icon: "∗" },
 ];
 
@@ -314,7 +311,7 @@ function SourcesPage() {
 // ─── 节点 ────────────────────────────────────────────────────────────
 
 const NodeTable = memo(function NodeTable({ items, onToggle, busyId }: { items: NodeItem[]; onToggle: (item: NodeItem) => void; busyId: string | null }) {
-  return <div className="table-wrap"><table><thead><tr><th>名称</th><th>协议</th><th>服务器</th><th>来源</th><th>启用</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong>{item.tags.length > 0 && <small>{item.tags.join(" · ")}</small>}</td><td><span className="protocol">{item.protocol}</span></td><td className="mono">{item.server}:{item.port}</td><td>{item.source_name}</td><td><button type="button" className={"switch " + (item.enabled ? "on" : "")} aria-label={item.enabled ? "停用 " + item.name : "启用 " + item.name} aria-pressed={Boolean(item.enabled)} disabled={busyId === item.id} onClick={() => onToggle(item)}><span /></button></td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr><th>名称</th><th>协议</th><th>服务器</th><th>来源</th><th>启用</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong></td><td><span className="protocol">{item.protocol}</span></td><td className="mono">{item.server}:{item.port}</td><td>{item.source_name}</td><td><button type="button" className={"switch " + (item.enabled ? "on" : "")} aria-label={item.enabled ? "停用 " + item.name : "启用 " + item.name} aria-pressed={Boolean(item.enabled)} disabled={busyId === item.id} onClick={() => onToggle(item)}><span /></button></td></tr>)}</tbody></table></div>;
 });
 
 function NodeGroup({ title, state, items, onToggle, busyId, page, onPage }: { title: string; state: ReturnType<typeof usePagedList<NodeItem>>; items: NodeItem[]; onToggle: (item: NodeItem) => void; busyId: string | null; page: number; onPage: (page: number) => void }) {
@@ -600,28 +597,7 @@ function SubscriptionsPage() {
   </section>;
 }
 
-// ─── 日志与设置 ──────────────────────────────────────────────────────
-
-interface AuditEntry {
-  id: string;
-  action: string;
-  target_type: string;
-  username: string;
-  created_at: string;
-  request_id: string;
-}
-
-function LogsPage() {
-  const [page, setPage] = useState(1);
-  const list = usePagedList<AuditEntry>("/api/audit-logs", {}, page, 25);
-  const items = list.data?.items ?? [];
-  return <section className="panel page-panel">
-    <div className="panel-head"><div><p className="eyebrow">Audit trail</p><h2>审计日志</h2><p className="muted">所有管理修改都会记录动作、目标和请求 ID。</p></div><span className="status-pill neutral">{list.data?.total ?? 0} 条</span></div>
-    <ListState state={list} empty={items.length === 0 ? <div className="empty">暂无审计记录。</div> : null} />
-    <div className="timeline">{items.map((item) => <div className="timeline-item" key={item.id}><span className="timeline-dot" /><div><strong>{item.action}</strong><p>{item.username ?? "system"} · {item.target_type ?? "system"}</p><small>{formatTime(item.created_at)} · {item.request_id?.slice(0, 8)}</small></div></div>)}</div>
-    <Pagination page={page} pageSize={25} total={list.data?.total ?? 0} onPage={setPage} label="审计日志分页" />
-  </section>;
-}
+// ─── 设置 ────────────────────────────────────────────────────────────
 
 function SettingsPage() {
   const [timezone, setTimezone] = useState("UTC");
@@ -725,7 +701,6 @@ export default function App() {
   if (route.startsWith("/sources")) page = <SourcesPage />;
   else if (route.startsWith("/nodes")) page = <NodesPage />;
   else if (route.startsWith("/subscriptions")) page = <SubscriptionsPage />;
-  else if (route.startsWith("/logs")) page = <LogsPage />;
   else if (route.startsWith("/settings")) page = <SettingsPage />;
   else page = <DashboardPage />;
   return <Shell session={session} path={route} navigate={navigate} logout={() => void logout()}>{page}</Shell>;

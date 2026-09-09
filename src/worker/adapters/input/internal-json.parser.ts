@@ -16,7 +16,7 @@ export async function parseInternalJson(content: string): Promise<NormalizedNode
     const port = validPort(input.port);
     if (!name || !protocol || !server || !port) continue;
     const config = input.config && typeof input.config === "object" ? input.config as Record<string, unknown> : { ...input, type: protocol };
-    nodes.push(await completeNode({ name, protocol, server, port, config, tags: Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === "string") : [], rawUri: typeof input.rawUri === "string" ? input.rawUri : undefined }));
+    nodes.push(await completeNode({ name, protocol, server, port, config, rawUri: typeof input.rawUri === "string" ? input.rawUri : undefined }));
   }
   return nodes;
 }

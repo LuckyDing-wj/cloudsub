@@ -26,7 +26,6 @@ interface NodeRow {
   server: string;
   port: number;
   config_json: string;
-  tags_json: string;
   raw_uri: string | null;
   enabled: number;
 }
@@ -55,7 +54,6 @@ function rowToNode(row: NodeRow): NormalizedNode {
     server: row.server,
     port: row.port,
     config: JSON.parse(row.config_json) as Record<string, unknown>,
-    tags: JSON.parse(row.tags_json) as string[],
     rawUri: row.raw_uri ?? undefined,
     enabled: Boolean(row.enabled),
   };

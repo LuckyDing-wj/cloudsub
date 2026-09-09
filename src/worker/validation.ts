@@ -40,13 +40,11 @@ export const sourceUpdateSchema = sourceCreateSchema.partial().omit({ type: true
 export const nodeUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   enabled: z.boolean().optional(),
-  tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
 });
 
 export const nodeBatchSchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(100),
   enabled: z.boolean().optional(),
-  tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
 });
 
 /**
@@ -61,7 +59,6 @@ const safeNamePattern = z.string().max(200).superRefine((value, context) => {
 
 export const rulesSchema = z.object({
   protocols: z.array(z.string().trim().min(1).max(30)).max(20).optional(),
-  tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   includeName: safeNamePattern.optional(),
   excludeName: safeNamePattern.optional(),
   sortBy: z.enum(["name", "protocol", "source"]).optional(),

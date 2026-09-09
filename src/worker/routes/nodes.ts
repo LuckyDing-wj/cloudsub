@@ -1,8 +1,6 @@
 import type { Hono } from "hono";
 import type { AppBindings } from "../env";
 import { body, maskServer, pageParams } from "../http";
-import { writeAuditDeferred } from "../services/audit";
-import { consumeRateLimit } from "../services/rate-limit";
 import { AppError } from "../shared/errors";
 import { nodeBatchSchema, nodeUpdateSchema } from "../validation";
 
@@ -34,48 +32,40 @@ export function registerNodeRoutes(app: Hono<AppBindings>): void {
     // (and totals) stay consistent — the count must never drift from the
     // filtered item set.
     const [items, total] = await Promise.all([
-      context.env.DB.prepare("SELECT n.id, n.source_id, s.name AS source_name, s.source_kind, n.name, n.protocol, n.server, n.port, n.tags_json, n.enabled, n.updated_at FROM nodes n JOIN sources s ON s.id = n.source_id WHERE " + where + " ORDER BY n.name COLLATE NOCASE LIMIT ? OFFSET ?").bind(...parameters, pageSize, offset).all<any>(),
+      context.env.DB.prepare("SELECT n.id, n.source_id, s.name AS source_name, s.source_kind, n.name, n.protocol, n.server, n.port, n.enabled, n.updated_at FROM nodes n JOIN sources s ON s.id = n.source_id WHERE " + where + " ORDER BY n.name COLLATE NOCASE LIMIT ? OFFSET ?").bind(...parameters, pageSize, offset).all<any>(),
       context.env.DB.prepare("SELECT COUNT(*) AS count FROM nodes n JOIN sources s ON s.id = n.source_id WHERE " + where).bind(...parameters).first<{ count: number }>(),
     ]);
-    return context.json({ data: { items: items.results.map((item) => ({ ...item, server: maskServer(item.server), tags: JSON.parse(item.tags_json), tags_json: undefined })), page, pageSize, total: total?.count ?? 0 } });
+    return context.json({ data: { items: items.results.map((item) => ({ ...item, server: maskServer(item.server) })), page, pageSize, total: total?.count ?? 0 } });
   });
 
   app.get("/api/nodes/:id", async (context) => {
-    const node = await context.env.DB.prepare("SELECT n.id, n.source_id, s.name AS source_name, s.source_kind, n.name, n.protocol, n.server, n.port, n.tags_json, n.enabled, n.created_at, n.updated_at FROM nodes n JOIN sources s ON s.id = n.source_id WHERE n.id = ? AND n.present = 1").bind(context.req.param("id")).first<any>();
+    const node = await context.env.DB.prepare("SELECT n.id, n.source_id, s.name AS source_name, s.source_kind, n.name, n.protocol, n.server, n.port, n.enabled, n.created_at, n.updated_at FROM nodes n JOIN sources s ON s.id = n.source_id WHERE n.id = ? AND n.present = 1").bind(context.req.param("id")).first<any>();
     if (!node) throw new AppError(404, "节点不存在", "node_not_found");
-    return context.json({ data: { ...node, server: maskServer(node.server), tags: JSON.parse(node.tags_json), tags_json: undefined } });
+    return context.json({ data: { ...node, server: maskServer(node.server) } });
   });
 
   app.put("/api/nodes/:id", async (context) => {
     const input = await body(context, nodeUpdateSchema);
     const id = context.req.param("id");
-    const current = await context.env.DB.prepare("SELECT id, source_id, name, enabled, tags_json FROM nodes WHERE id = ? AND present = 1").bind(id).first<any>();
+    const current = await context.env.DB.prepare("SELECT id, source_id, name, enabled FROM nodes WHERE id = ? AND present = 1").bind(id).first<any>();
     if (!current) throw new AppError(404, "节点不存在", "node_not_found");
     const now = new Date().toISOString();
     await context.env.DB.batch([
-      context.env.DB.prepare("UPDATE nodes SET name = ?, enabled = ?, tags_json = ?, updated_at = ? WHERE id = ?").bind(input.name ?? current.name, (input.enabled ?? Boolean(current.enabled)) ? 1 : 0, JSON.stringify(input.tags ?? JSON.parse(current.tags_json)), now, id),
+      context.env.DB.prepare("UPDATE nodes SET name = ?, enabled = ?, updated_at = ? WHERE id = ?").bind(input.name ?? current.name, (input.enabled ?? Boolean(current.enabled)) ? 1 : 0, now, id),
       context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id = ?)").bind(now, current.source_id),
     ]);
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "node.update", targetType: "node", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { id } });
   });
 
   app.post("/api/nodes/batch", async (context) => {
     const input = await body(context, nodeBatchSchema);
-    if (input.enabled === undefined && input.tags === undefined) throw new AppError(422, "没有可更新的字段", "empty_update");
-    const principal = context.get("principal");
-    const limit = await consumeRateLimit(context.env, "nodes:batch:" + principal.adminId, 60, 60_000);
-    if (!limit.allowed) {
-      context.header("retry-after", String(limit.retryAfter));
-      throw new AppError(429, "操作过于频繁，请稍后重试", "batch_rate_limited");
-    }
+    if (input.enabled === undefined) throw new AppError(422, "没有可更新的字段", "empty_update");
     const placeholders = input.ids.map(() => "?").join(",");
-    const nodes = await context.env.DB.prepare("SELECT id, source_id, enabled, tags_json FROM nodes WHERE id IN (" + placeholders + ")").bind(...input.ids).all<any>();
+    const nodes = await context.env.DB.prepare("SELECT id, source_id, enabled FROM nodes WHERE id IN (" + placeholders + ")").bind(...input.ids).all<any>();
     const now = new Date().toISOString();
     // D1 caps a batch's statements; a 100-id selection must be chunked
     // instead of sent as one (over-sized) batch.
-    const statements = nodes.results.map((node) => context.env.DB.prepare("UPDATE nodes SET enabled = ?, tags_json = ?, updated_at = ? WHERE id = ?").bind(input.enabled === undefined ? node.enabled : input.enabled ? 1 : 0, JSON.stringify(input.tags ?? JSON.parse(node.tags_json)), now, node.id));
+    const statements = nodes.results.map((node) => context.env.DB.prepare("UPDATE nodes SET enabled = ?, updated_at = ? WHERE id = ?").bind(input.enabled === undefined ? node.enabled : input.enabled ? 1 : 0, now, node.id));
     for (let offset = 0; offset < statements.length; offset += 75) {
       await context.env.DB.batch(statements.slice(offset, offset + 75));
     }
@@ -84,7 +74,6 @@ export function registerNodeRoutes(app: Hono<AppBindings>): void {
       const sourcePlaceholders = sourceIds.map(() => "?").join(",");
       await context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id IN (" + sourcePlaceholders + "))").bind(now, ...sourceIds).run();
     }
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "node.batch_update", targetType: "node", details: { count: nodes.results.length }, requestId: context.get("requestId") });
     return context.json({ data: { updated: nodes.results.length } });
   });
 }

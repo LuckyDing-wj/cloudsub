@@ -4,7 +4,6 @@ import { createMiddleware } from "hono/factory";
 import type { AppBindings, Env } from "../env";
 import { constantTimeEqual, hmacSha256Hex, randomToken } from "../security/crypto";
 import { AppError } from "../shared/errors";
-import { clearRateLimit, consumeRateLimit } from "./rate-limit";
 
 export const SESSION_COOKIE = "cloudsub_session";
 export const CSRF_COOKIE = "cloudsub_csrf";
@@ -76,29 +75,3 @@ export const requireCsrf = createMiddleware<AppBindings>(async (context, next) =
   }
   await next();
 });
-
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_FAILURES = 5;
-const LOGIN_BLOCK_MS = 15 * 60 * 1000;
-
-function loginBucket(key: string): string {
-  return "login:" + key;
-}
-
-export async function loginRateLimit(env: Env, key: string): Promise<{ allowed: boolean; retryAfter: number }> {
-  const existing = await env.DB.prepare("SELECT blocked_until FROM rate_limits WHERE bucket_key = ?").bind(loginBucket(key)).first<{ blocked_until: number | null }>();
-  if (existing?.blocked_until && existing.blocked_until > Date.now()) {
-    return { allowed: false, retryAfter: Math.ceil((existing.blocked_until - Date.now()) / 1000) };
-  }
-  return { allowed: true, retryAfter: 0 };
-}
-
-export async function recordLoginFailure(env: Env, key: string): Promise<void> {
-  // Counting past the threshold is what arms the block: the 6th failure in
-  // the window trips `limit` and sets blocked_until for 15 minutes.
-  await consumeRateLimit(env, loginBucket(key), LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS, LOGIN_BLOCK_MS);
-}
-
-export async function clearLoginFailures(env: Env, key: string): Promise<void> {
-  await clearRateLimit(env, loginBucket(key));
-}

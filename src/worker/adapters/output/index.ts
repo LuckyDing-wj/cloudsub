@@ -19,7 +19,6 @@ export function applySubscriptionRules(nodes: NormalizedNode[], rules: Subscript
   const rename = (rules.rename ?? [])
     .map((rule) => ({ compiled: compileSafePattern(rule.pattern), replacement: rule.replacement.slice(0, 200) }))
     .filter((rule): rule is { compiled: NonNullable<ReturnType<typeof compileSafePattern>>; replacement: string } => rule.compiled !== null);
-  const requiredTags = new Set(rules.tags ?? []);
   const seen = new Set<string>();
   // Compile once per rule instead of once per (node, rule) pair: building a
   // matcher allocates the VM state, which is pure overhead when repeated for
@@ -30,7 +29,6 @@ export function applySubscriptionRules(nodes: NormalizedNode[], rules: Subscript
   const output = nodes.filter((node) => {
     if (!node.enabled || seen.has(node.fingerprint)) return false;
     if (protocols.size > 0 && !protocols.has(node.protocol.toLowerCase())) return false;
-    if (requiredTags.size > 0 && ![...requiredTags].every((tag) => node.tags.includes(tag))) return false;
     if (includeMatcher && !includeMatcher.test(node.name)) return false;
     if (excludeMatcher && excludeMatcher.test(node.name)) return false;
     seen.add(node.fingerprint);

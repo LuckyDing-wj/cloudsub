@@ -62,10 +62,10 @@ async function sourceContent(env: Env, source: SourceRow): Promise<{ text: strin
  */
 function stagingStatement(env: Env, sourceId: string, node: NormalizedNode, now: string): D1PreparedStatement {
   return env.DB.prepare(
-    "INSERT INTO nodes_staging (id, source_id, fingerprint, name, protocol, server, port, config_json, tags_json, raw_uri, enabled, present, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?) ON CONFLICT(source_id, fingerprint) DO UPDATE SET protocol = excluded.protocol, server = excluded.server, port = excluded.port, config_json = excluded.config_json, raw_uri = excluded.raw_uri, updated_at = excluded.updated_at",
+    "INSERT INTO nodes_staging (id, source_id, fingerprint, name, protocol, server, port, config_json, raw_uri, enabled, present, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?) ON CONFLICT(source_id, fingerprint) DO UPDATE SET protocol = excluded.protocol, server = excluded.server, port = excluded.port, config_json = excluded.config_json, raw_uri = excluded.raw_uri, updated_at = excluded.updated_at",
   ).bind(
     crypto.randomUUID(), sourceId, node.fingerprint, node.name, node.protocol, node.server, node.port,
-    JSON.stringify(node.config), JSON.stringify(node.tags), node.rawUri ?? null, now, now,
+    JSON.stringify(node.config), node.rawUri ?? null, now, now,
   );
 }
 
@@ -119,7 +119,7 @@ function failureBackoffIso(failureCount: number): string {
  * Promote the staged node set into `nodes` atomically.
  *
  * The entire promotion — demoting old rows, upserting from staging (which
- * deliberately preserves the user's name/enabled/tags edits on matching
+ * deliberately preserves the user's name/enabled edits on matching
  * fingerprints), updating the source row, bumping every affected
  * subscription revision and recording the success log — is a single D1
  * batch, which D1 executes atomically. If any statement fails, none of it
@@ -130,8 +130,8 @@ async function promoteStagedNodes(env: Env, sourceId: string, source: SourceRow,
   await env.DB.batch([
     env.DB.prepare("UPDATE nodes SET present = 0, updated_at = ? WHERE source_id = ? AND present = 1").bind(now, sourceId),
     env.DB.prepare(
-      "INSERT INTO nodes (id, source_id, fingerprint, name, protocol, server, port, config_json, tags_json, raw_uri, enabled, present, created_at, updated_at) " +
-      "SELECT id, source_id, fingerprint, name, protocol, server, port, config_json, tags_json, raw_uri, enabled, present, created_at, updated_at FROM nodes_staging WHERE source_id = ? " +
+      "INSERT INTO nodes (id, source_id, fingerprint, name, protocol, server, port, config_json, raw_uri, enabled, present, created_at, updated_at) " +
+      "SELECT id, source_id, fingerprint, name, protocol, server, port, config_json, raw_uri, enabled, present, created_at, updated_at FROM nodes_staging WHERE source_id = ? " +
       "ON CONFLICT(source_id, fingerprint) DO UPDATE SET protocol = excluded.protocol, server = excluded.server, port = excluded.port, config_json = excluded.config_json, raw_uri = excluded.raw_uri, present = 1, updated_at = excluded.updated_at",
     ).bind(sourceId),
     env.DB.prepare("UPDATE sources SET last_success_at = ?, last_error = NULL, content_hash = ?, next_refresh_at = ?, failure_count = 0, updated_at = ? WHERE id = ?").bind(now, contentHash, nextRefresh, now, sourceId),

@@ -171,8 +171,7 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 - **密码哈希** — PBKDF2-SHA256，100,000 次迭代（Cloudflare Workers WebCrypto 的 PBKDF2 上限为 10 万次）
 - **会话管理** — HMAC 存储的 session token，HttpOnly + Secure + SameSite=Strict cookie
 - **CSRF 保护** — 双重 token（cookie + header），常量时间比较；Origin 与请求来源一致时放行
-- **限流** — 计数存放在 D1（KV 最终一致会被并发绕过）：登录 5 次失败锁定 15 分钟、订阅每 IP 每分钟 120 次、刷新 30 次/分、批量改节点 60 次/分、改密 10 次/10 分钟
-- **审计日志** — 所有管理操作记录到 audit_logs（写入走 `waitUntil`，不阻塞响应）
+- **令牌分发** — 订阅地址使用不可猜测的 HMAC 令牌，支持过期与一键轮换
 
 ## 项目结构
 
@@ -191,7 +190,7 @@ src/
 │   │   ├── sources.ts        #   数据源 CRUD / 刷新 / 日志
 │   │   ├── nodes.ts          #   节点查询 / 更新 / 批量
 │   │   ├── subscriptions.ts  #   订阅 CRUD / 预览 / 令牌 / 缓存
-│   │   └── system.ts         #   概览 / 设置 / 审计日志
+│   │   └── system.ts         #   概览 / 设置
 │   ├── env.ts                # 环境变量绑定
 │   ├── adapters/
 │   │   ├── input/            # 输入解析器
@@ -205,9 +204,7 @@ src/
 │   ├── services/
 │   │   ├── sources.ts        # 数据源刷新逻辑（租约 / 并发 / 失败退避）
 │   │   ├── subscriptions.ts  # 订阅生成 + 令牌 + KV 缓存
-│   │   ├── auth.ts           # 会话 / CSRF / 登录限流
-│   │   ├── rate-limit.ts     # D1 计数限流
-│   │   └── audit.ts          # 审计日志
+│   │   └── auth.ts           # 会话 / CSRF
 │   ├── security/
 │   │   ├── crypto.ts         # AES-GCM / HMAC / SHA-256
 │   │   ├── password.ts       # PBKDF2

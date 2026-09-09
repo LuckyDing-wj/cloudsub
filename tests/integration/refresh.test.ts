@@ -378,12 +378,6 @@ describe("list APIs: sourceKind filters, count JOINs and pagination totals", () 
     expect(response.data.total).toBeGreaterThanOrEqual(response.data.items.length);
   });
 
-  it("paginates audit logs with accurate totals", async () => {
-    const response = await json<{ data: { items: unknown[]; total: number } }>(await workerRequest("/api/audit-logs?page=1&pageSize=5", { headers: { cookie: auth.cookie } }));
-    expect(response.data.total).toBeGreaterThan(0);
-    expect(response.data.items.length).toBeLessThanOrEqual(5);
-  });
-
   it("exposes every source through the options endpoint (no first-100 limit)", async () => {
     const response = await json<{ data: { items: unknown[] } }>(await workerRequest("/api/sources/options", { headers: { cookie: auth.cookie } }));
     const sources = await json<{ data: { total: number } }>(await workerRequest("/api/sources?pageSize=100", { headers: { cookie: auth.cookie } }));

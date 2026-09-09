@@ -3,7 +3,6 @@ import type { NormalizedNode, SubscriptionRules, SubscriptionTarget } from "../.
 import { applySubscriptionRules, renderSubscription } from "../adapters/output";
 import type { AppBindings, Env } from "../env";
 import { body, pageParams, slugify } from "../http";
-import { writeAuditDeferred } from "../services/audit";
 import { issueSubscriptionToken } from "../services/subscriptions";
 import { AppError } from "../shared/errors";
 import { previewSchema, subscriptionCreateSchema, subscriptionUpdateSchema } from "../validation";
@@ -19,7 +18,7 @@ async function subscriptionPreview(env: Env, id: string, targetOverride?: Subscr
   const result = await env.DB.prepare("SELECT n.* FROM nodes n JOIN subscription_sources ss ON ss.source_id = n.source_id JOIN sources s ON s.id = n.source_id WHERE ss.subscription_id = ? AND s.enabled = 1 AND n.enabled = 1 AND n.present = 1").bind(id).all<any>();
   const nodes: NormalizedNode[] = result.results.map((row) => ({
     id: row.id, sourceId: row.source_id, fingerprint: row.fingerprint, name: row.name, protocol: row.protocol, server: row.server, port: row.port,
-    config: JSON.parse(row.config_json), tags: JSON.parse(row.tags_json), rawUri: row.raw_uri ?? undefined, enabled: Boolean(row.enabled),
+    config: JSON.parse(row.config_json), rawUri: row.raw_uri ?? undefined, enabled: Boolean(row.enabled),
   }));
   const filtered = applySubscriptionRules(nodes, JSON.parse(subscription.rules_json) as SubscriptionRules);
   const previewNodes = filtered.slice(0, PREVIEW_MAX_NODES);
@@ -71,8 +70,6 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
       ...[...new Set(input.sourceIds)].map((sourceId) => context.env.DB.prepare("INSERT INTO subscription_sources (subscription_id, source_id) VALUES (?, ?)").bind(id, sourceId)),
     ]);
     const token = await issueSubscriptionToken(context.env, id, input.expiresAt ?? undefined);
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "subscription.create", targetType: "subscription", targetId: id, details: { name: input.name, sources: input.sourceIds.length }, requestId: context.get("requestId") });
     return context.json({ data: { id, slug, token: token.token, tokenPrefix: token.prefix } }, 201);
   });
 
@@ -112,8 +109,6 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
       );
     }
     await context.env.DB.batch(statements);
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "subscription.update", targetType: "subscription", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { id } });
   });
 
@@ -121,8 +116,6 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
     const id = context.req.param("id");
     const result = await context.env.DB.prepare("DELETE FROM subscriptions WHERE id = ?").bind(id).run();
     if (!result.meta.changes) throw new AppError(404, "订阅不存在", "subscription_not_found");
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "subscription.delete", targetType: "subscription", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { ok: true } });
   });
 
@@ -142,8 +135,6 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
       context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id = ?").bind(now, id),
     ]);
     const token = await issueSubscriptionToken(context.env, id);
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "subscription.token.rotate", targetType: "subscription", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { token: token.token, tokenPrefix: token.prefix } });
   });
 

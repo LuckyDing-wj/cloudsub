@@ -4,14 +4,14 @@ import { applySubscriptionRules, renderSubscription } from "../../src/worker/ada
 import { decodeBase64Text } from "../../src/worker/adapters/input/shared";
 
 const nodes: NormalizedNode[] = [
-  { name: "Tokyo 01", protocol: "vless", server: "jp.example.com", port: 443, config: { type: "vless", uuid: "id-1", tls: true }, tags: ["premium"], enabled: true, fingerprint: "a" },
-  { name: "Blocked", protocol: "ss", server: "us.example.com", port: 443, config: { type: "ss", cipher: "aes-128-gcm", password: "secret" }, tags: [], enabled: false, fingerprint: "b" },
-  { name: "Tokyo 01 duplicate", protocol: "vless", server: "jp.example.com", port: 443, config: { type: "vless", uuid: "id-1", tls: true }, tags: ["premium"], enabled: true, fingerprint: "a" },
+  { name: "Tokyo 01", protocol: "vless", server: "jp.example.com", port: 443, config: { type: "vless", uuid: "id-1", tls: true }, enabled: true, fingerprint: "a" },
+  { name: "Blocked", protocol: "ss", server: "us.example.com", port: 443, config: { type: "ss", cipher: "aes-128-gcm", password: "secret" }, enabled: false, fingerprint: "b" },
+  { name: "Tokyo 01 duplicate", protocol: "vless", server: "jp.example.com", port: 443, config: { type: "vless", uuid: "id-1", tls: true }, enabled: true, fingerprint: "a" },
 ];
 
 describe("subscription rules and renderers", () => {
   it("filters, deduplicates and renames in a stable order", () => {
-    const output = applySubscriptionRules(nodes, { protocols: ["vless"], tags: ["premium"], rename: [{ pattern: "Tokyo", replacement: "JP" }] });
+    const output = applySubscriptionRules(nodes, { protocols: ["vless"], rename: [{ pattern: "Tokyo", replacement: "JP" }] });
     expect(output).toHaveLength(1);
     expect(output[0].name).toBe("JP 01");
   });
@@ -59,7 +59,7 @@ describe("subscription rules and renderers", () => {
 
   it("renders standard Base64 raw subscriptions with transport params", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "WS Node", protocol: "vless", server: "ws.example.com", port: 443, config: { type: "vless", uuid: "id-ws", tls: true, network: "ws", "ws-opts": { path: "/ray", headers: { Host: "cdn.example.com" } } }, tags: [], enabled: true, fingerprint: "ws1" },
+      { name: "WS Node", protocol: "vless", server: "ws.example.com", port: 443, config: { type: "vless", uuid: "id-ws", tls: true, network: "ws", "ws-opts": { path: "/ray", headers: { Host: "cdn.example.com" } } }, enabled: true, fingerprint: "ws1" },
     ];
     const body = renderSubscription(testNodes, "raw").body;
     const decoded = decodeBase64Text(body);
@@ -72,7 +72,7 @@ describe("subscription rules and renderers", () => {
   it("reflects renames in raw output while preserving the original URI when unnamed", () => {
     const original = "vless://550e8400-e29b-41d4-a716-446655440000@ws.example.com:443?security=tls&sni=ws.example.com&type=ws&path=%2Fray&host=cdn.example.com#Tokyo%2001";
     const testNodes: NormalizedNode[] = [
-      { name: "Tokyo 01", protocol: "vless", server: "ws.example.com", port: 443, config: { type: "vless", uuid: "550e8400-e29b-41d4-a716-446655440000", tls: true, sni: "ws.example.com", network: "ws", "ws-opts": { path: "/ray", headers: { Host: "cdn.example.com" } } }, tags: [], enabled: true, fingerprint: "ws1", rawUri: original },
+      { name: "Tokyo 01", protocol: "vless", server: "ws.example.com", port: 443, config: { type: "vless", uuid: "550e8400-e29b-41d4-a716-446655440000", tls: true, sni: "ws.example.com", network: "ws", "ws-opts": { path: "/ray", headers: { Host: "cdn.example.com" } } }, enabled: true, fingerprint: "ws1", rawUri: original },
     ];
     // Unchanged name → the exact original URI (params + credentials) is kept.
     const unchanged = decodeBase64Text(renderSubscription(testNodes, "raw").body);
@@ -88,7 +88,7 @@ describe("subscription rules and renderers", () => {
 
   it("preserves hysteria2 obfs params in raw output", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "Hy2 Node", protocol: "hysteria2", server: "hy2.example.com", port: 443, config: { type: "hysteria2", password: "pass123", obfs: "salamander", "obfs-password": "obfspass", up: "100", down: "200" }, tags: [], enabled: true, fingerprint: "hy1" },
+      { name: "Hy2 Node", protocol: "hysteria2", server: "hy2.example.com", port: 443, config: { type: "hysteria2", password: "pass123", obfs: "salamander", "obfs-password": "obfspass", up: "100", down: "200" }, enabled: true, fingerprint: "hy1" },
     ];
     const body = renderSubscription(testNodes, "raw").body;
     const decoded = decodeBase64Text(body);
@@ -100,7 +100,7 @@ describe("subscription rules and renderers", () => {
 
   it("renders AnyTLS raw URIs preserving full options without a security param", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, tags: [], enabled: true, fingerprint: "at1" },
+      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, enabled: true, fingerprint: "at1" },
     ];
     const body = renderSubscription(testNodes, "raw").body;
     const decoded = decodeBase64Text(body);
@@ -117,7 +117,7 @@ describe("subscription rules and renderers", () => {
 
   it("renders AnyTLS proxies in Mihomo YAML with integer-second idle timings", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, tags: [], enabled: true, fingerprint: "at1" },
+      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, enabled: true, fingerprint: "at1" },
     ];
     const body = renderSubscription(testNodes, "mihomo").body;
     expect(body).toContain("type: anytls");
@@ -133,7 +133,7 @@ describe("subscription rules and renderers", () => {
 
   it("renders AnyTLS outbounds in Sing-box JSON with duration strings and required TLS", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, tags: [], enabled: true, fingerprint: "at1" },
+      { name: "AnyTLS Node", protocol: "anytls", server: "any.example.com", port: 443, config: { type: "anytls", password: "pass123", tls: true, sni: "any.example.com", alpn: ["h2", "http/1.1"], "skip-cert-verify": true, "client-fingerprint": "chrome", "idle-session-check-interval": "30s", "idle-session-timeout": "60s", "min-idle-session": 2 }, enabled: true, fingerprint: "at1" },
     ];
     const body = renderSubscription(testNodes, "singbox").body;
     const parsed = JSON.parse(body);
@@ -152,9 +152,9 @@ describe("subscription rules and renderers", () => {
 
   it("emits TLS for TLS-only protocols even when the YAML omits the flag", () => {
     const testNodes: NormalizedNode[] = [
-      { name: "Hy2", protocol: "hysteria2", server: "hy2.example.com", port: 443, config: { type: "hysteria2", password: "pass123" }, tags: [], enabled: true, fingerprint: "hy1" },
-      { name: "Tuic", protocol: "tuic", server: "tuic.example.com", port: 443, config: { type: "tuic", uuid: "550e8400-e29b-41d4-a716-446655440000", password: "p" }, tags: [], enabled: true, fingerprint: "tu1" },
-      { name: "Trojan", protocol: "trojan", server: "tr.example.com", port: 443, config: { type: "trojan", password: "p" }, tags: [], enabled: true, fingerprint: "tr1" },
+      { name: "Hy2", protocol: "hysteria2", server: "hy2.example.com", port: 443, config: { type: "hysteria2", password: "pass123" }, enabled: true, fingerprint: "hy1" },
+      { name: "Tuic", protocol: "tuic", server: "tuic.example.com", port: 443, config: { type: "tuic", uuid: "550e8400-e29b-41d4-a716-446655440000", password: "p" }, enabled: true, fingerprint: "tu1" },
+      { name: "Trojan", protocol: "trojan", server: "tr.example.com", port: 443, config: { type: "trojan", password: "p" }, enabled: true, fingerprint: "tr1" },
     ];
     const parsed = JSON.parse(renderSubscription(testNodes, "singbox").body);
     for (const outbound of parsed.outbounds as Array<Record<string, unknown>>) {

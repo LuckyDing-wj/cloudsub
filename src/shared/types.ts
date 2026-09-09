@@ -10,7 +10,6 @@ export interface NormalizedNode {
   server: string;
   port: number;
   config: Record<string, unknown>;
-  tags: string[];
   enabled: boolean;
   fingerprint: string;
   rawUri?: string;
@@ -18,7 +17,6 @@ export interface NormalizedNode {
 
 export interface SubscriptionRules {
   protocols?: string[];
-  tags?: string[];
   includeName?: string;
   excludeName?: string;
   sortBy?: "name" | "protocol" | "source";

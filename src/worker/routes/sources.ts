@@ -4,8 +4,6 @@ import type { AppBindings } from "../env";
 import { body, likePattern, pageParams, redactedUpstreamUrl } from "../http";
 import { decryptJson, encryptJson } from "../security/crypto";
 import { validateUpstreamUrl } from "../security/safe-fetch";
-import { writeAuditDeferred } from "../services/audit";
-import { consumeRateLimit } from "../services/rate-limit";
 import { refreshSource } from "../services/sources";
 import { AppError } from "../shared/errors";
 import { sourceCreateSchema, sourceUpdateSchema } from "../validation";
@@ -71,8 +69,6 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
     let refresh: unknown;
     let refreshError: string | undefined;
     try { refresh = await refreshSource(context.env, id, { force: true }); } catch (error) { refreshError = error instanceof AppError ? error.message : "首次解析失败"; }
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.create", targetType: "source", targetId: id, details: { name: input.name, type: input.type, sourceKind: input.sourceKind }, requestId: context.get("requestId") });
     return context.json({ data: { id, sourceKind: input.sourceKind, refresh, refreshError } }, 201);
   });
 
@@ -123,8 +119,6 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
       statements.push(context.env.DB.prepare("UPDATE subscriptions SET revision = revision + 1, updated_at = ? WHERE id IN (SELECT subscription_id FROM subscription_sources WHERE source_id = ?)").bind(now, id));
     }
     await context.env.DB.batch(statements);
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.update", targetType: "source", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { id } });
   });
 
@@ -141,24 +135,13 @@ export function registerSourceRoutes(app: Hono<AppBindings>): void {
       context.env.DB.prepare("DELETE FROM sources WHERE id = ?").bind(id),
     ]);
     if (!(results[2]?.meta.changes > 0)) throw new AppError(404, "数据源不存在", "source_not_found");
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.delete", targetType: "source", targetId: id, requestId: context.get("requestId") });
     return context.json({ data: { ok: true } });
   });
 
   app.post("/api/sources/:id/refresh", async (context) => {
-    // Each refresh is an outbound request plus a D1 write burst; without a
-    // cap a script could use it to hammer arbitrary upstreams.
-    const principal = context.get("principal");
-    const limit = await consumeRateLimit(context.env, "refresh:" + principal.adminId, 30, 60_000);
-    if (!limit.allowed) {
-      context.header("retry-after", String(limit.retryAfter));
-      throw new AppError(429, "刷新过于频繁，请稍后重试", "refresh_rate_limited");
-    }
     // A deliberate admin refresh bypasses the scheduler cooldown but still
     // acquires the per-source lease, so it cannot race another refresh.
     const result = await refreshSource(context.env, context.req.param("id"), { force: true });
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "source.refresh", targetType: "source", targetId: context.req.param("id"), details: result, requestId: context.get("requestId") });
     return context.json({ data: result });
   });
 

@@ -1,10 +1,9 @@
 import type { Hono } from "hono";
 import type { AppBindings } from "../env";
-import { body, pageParams } from "../http";
-import { writeAuditDeferred } from "../services/audit";
+import { body } from "../http";
 import { settingsSchema } from "../validation";
 
-/** Dashboard summary, system settings, and audit-log listing. */
+/** Dashboard summary and system settings. */
 export function registerSystemRoutes(app: Hono<AppBindings>): void {
   app.get("/api/dashboard", async (context) => {
     const [sources, nodes, subscriptions, recentErrors, lastAccess] = await Promise.all([
@@ -28,17 +27,6 @@ export function registerSystemRoutes(app: Hono<AppBindings>): void {
     const now = new Date().toISOString();
     const value = { ...(current ? JSON.parse(current.value_json) : {}), timezone: input.timezone };
     await context.env.DB.prepare("INSERT INTO settings (key, value_json, updated_at) VALUES ('system', ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").bind(JSON.stringify(value), now).run();
-    const principal = context.get("principal");
-    writeAuditDeferred(context, { adminId: principal.adminId, action: "settings.update", targetType: "system", details: { timezone: input.timezone }, requestId: context.get("requestId") });
     return context.json({ data: value });
-  });
-
-  app.get("/api/audit-logs", async (context) => {
-    const { page, pageSize, offset } = pageParams(context);
-    const [logs, total] = await Promise.all([
-      context.env.DB.prepare("SELECT l.id, l.action, l.target_type, l.target_id, l.details_json, l.request_id, l.created_at, a.username FROM audit_logs l LEFT JOIN admins a ON a.id = l.admin_id ORDER BY l.created_at DESC LIMIT ? OFFSET ?").bind(pageSize, offset).all<any>(),
-      context.env.DB.prepare("SELECT COUNT(*) AS count FROM audit_logs").first<{ count: number }>(),
-    ]);
-    return context.json({ data: { items: logs.results.map((entry) => ({ ...entry, details: JSON.parse(entry.details_json), details_json: undefined })), page, pageSize, total: total?.count ?? 0 } });
   });
 }

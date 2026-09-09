@@ -57,20 +57,6 @@ export const sources = sqliteTable(
   ],
 );
 
-/**
- * Durable rate-limit counters. KV is eventually consistent, so a
- * read-modify-write counter there can be bypassed by concurrent requests;
- * D1 serialises writes, making the guarded increment below reliable enough
- * for abuse control. See services/rate-limit.ts.
- */
-export const rateLimits = sqliteTable("rate_limits", {
-  bucketKey: text("bucket_key").primaryKey(),
-  windowStart: integer("window_start").notNull(),
-  count: integer("count").notNull().default(0),
-  blockedUntil: integer("blocked_until"),
-  updatedAt: text("updated_at").notNull(),
-});
-
 export const sourceFetchLogs = sqliteTable(
   "source_fetch_logs",
   {
@@ -100,7 +86,6 @@ export const nodes = sqliteTable(
     server: text("server").notNull(),
     port: integer("port").notNull(),
     configJson: text("config_json").notNull(),
-    tagsJson: text("tags_json").notNull().default("[]"),
     rawUri: text("raw_uri"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     present: integer("present", { mode: "boolean" }).notNull().default(true),
@@ -137,7 +122,6 @@ export const nodesStaging = sqliteTable(
     server: text("server").notNull(),
     port: integer("port").notNull(),
     configJson: text("config_json").notNull(),
-    tagsJson: text("tags_json").notNull().default("[]"),
     rawUri: text("raw_uri"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     present: integer("present", { mode: "boolean" }).notNull().default(true),
@@ -193,17 +177,3 @@ export const subscriptionTokens = sqliteTable(
   ],
 );
 
-export const auditLogs = sqliteTable(
-  "audit_logs",
-  {
-    id: text("id").primaryKey(),
-    adminId: text("admin_id").references(() => admins.id, { onDelete: "set null" }),
-    action: text("action").notNull(),
-    targetType: text("target_type"),
-    targetId: text("target_id"),
-    detailsJson: text("details_json").notNull().default("{}"),
-    requestId: text("request_id"),
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => [index("idx_audit_logs_created_at").on(table.createdAt), index("idx_audit_logs_admin_id").on(table.adminId)],
-);
