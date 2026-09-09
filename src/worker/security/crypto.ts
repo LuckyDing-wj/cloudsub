@@ -1,8 +1,18 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/**
+ * Zero-copy view of the bytes' backing buffer where possible.
+ *
+ * Every buffer reaching here is freshly allocated (TextEncoder output,
+ * `new Uint8Array(await subtle.*)`, `Uint8Array.from`), so its view spans
+ * the whole buffer and can be handed to WebCrypto directly. The old
+ * `new Uint8Array(bytes).buffer` copied the entire payload — twice the
+ * memory for a 5 MB source.
+ */
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return new Uint8Array(bytes).buffer;
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) return bytes.buffer as ArrayBuffer;
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 export function bytesToBase64Url(bytes: Uint8Array): string {

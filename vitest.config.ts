@@ -1,6 +1,15 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+/**
+ * Minimal `fileURLToPath` — importing `node:url` would pull Node types into a
+ * tsconfig that intentionally has none.
+ * `new URL(...).pathname` is not usable here: on Windows it yields
+ * "/D:/...", which the migration reader then resolves to "D:\D:\...".
+ */
+function localPath(url: URL): string {
+  return decodeURIComponent(url.href.replace(/^file:\/+/u, ""));
+}
 
 export default defineConfig({
   plugins: [cloudflareTest(async () => ({
@@ -9,9 +18,7 @@ export default defineConfig({
       bindings: {
         APP_SECRET: "integration-app-secret",
         DATA_ENCRYPTION_KEY: "integration-data-secret",
-        // `new URL(...).pathname` yields "/D:/..." on Windows, which the
-        // migration reader then resolves to the non-existent "D:\D:\...".
-        TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("./migrations", import.meta.url))),
+        TEST_MIGRATIONS: await readD1Migrations(localPath(new URL("./migrations", import.meta.url))),
       },
     },
   }))],

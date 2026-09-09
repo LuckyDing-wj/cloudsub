@@ -82,6 +82,9 @@ export async function generateSubscription(env: Env, token: string, requestedTar
   const target = (requestedTarget || access.default_target) as SubscriptionTarget;
   if (!["raw", "mihomo", "singbox", "json"].includes(target)) throw new AppError(404, "订阅不可用", "subscription_unavailable");
   const cacheKey = "subscription:" + access.subscription_id + ":" + target + ":" + access.revision;
+  // Points at the cache key of the current revision so the previous one can
+  // be dropped explicitly instead of lingering in KV until its TTL expires.
+  const pointerKey = "subscription:ptr:" + access.subscription_id + ":" + target;
   const cached = await env.CACHE.get<{ body: string; contentType: string; extension: string; etag: string }>(cacheKey, "json");
   const cacheTtl = Math.max(60, Math.min(access.cache_ttl || Number(env.SUB_CACHE_TTL) || 300, 86_400));
   if (cached) return { ...cached, name: access.slug || access.name, cacheTtl, tokenId: access.token_id };
@@ -96,6 +99,11 @@ export async function generateSubscription(env: Env, token: string, requestedTar
   const entry = JSON.stringify({ ...rendered, etag });
   if (new TextEncoder().encode(entry).byteLength <= 20 * 1024 * 1024) {
     await env.CACHE.put(cacheKey, entry, { expirationTtl: cacheTtl });
+    // Only runs on a cache miss (a revision change), so the extra KV ops are
+    // not on the hot path.
+    const previous = await env.CACHE.get(pointerKey);
+    if (previous && previous !== cacheKey) await env.CACHE.delete(previous);
+    await env.CACHE.put(pointerKey, cacheKey, { expirationTtl: Math.max(cacheTtl, 86_400) });
   }
   await env.DB.prepare("UPDATE subscriptions SET last_generated_at = ? WHERE id = ?").bind(now, access.subscription_id).run();
   return { ...rendered, etag, name: access.slug || access.name, cacheTtl, tokenId: access.token_id };
