@@ -39,7 +39,7 @@ async function sourceContent(env: Env, source: SourceRow): Promise<{ text: strin
   if (source.type === "manual") {
     const text = payload.content ?? "";
     const bytes = new TextEncoder().encode(text).byteLength;
-    const maxBytes = Math.max(1024, Math.min(Number(env.MAX_SOURCE_SIZE) || 5_242_880, 10_485_760));
+    const maxBytes = Math.max(1024, Math.min(Number(env.MAX_SOURCE_SIZE) || 2_097_152, 10_485_760));
     if (bytes > maxBytes) throw new AppError(413, "数据源内容超过大小限制", "source_too_large");
     return { text, bytes };
   }
@@ -51,7 +51,7 @@ async function sourceContent(env: Env, source: SourceRow): Promise<{ text: strin
     headers: payload.headers,
     userAgent: source.user_agent ?? "CloudSub/0.1",
     timeoutMs: Math.max(1000, Math.min(source.timeout_ms, 30_000)),
-    maxBytes: Math.max(1024, Math.min(Number(env.MAX_SOURCE_SIZE) || 5_242_880, 10_485_760)),
+    maxBytes: Math.max(1024, Math.min(Number(env.MAX_SOURCE_SIZE) || 2_097_152, 10_485_760)),
   });
 }
 

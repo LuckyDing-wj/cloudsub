@@ -26,7 +26,7 @@ export const sourceCreateSchema = z.object({
   type: z.enum(["url", "manual"]),
   sourceKind: z.enum(["subscription", "standalone"]).default("subscription"),
   url: z.string().trim().max(2_000).optional(),
-  content: z.string().max(5_300_000).optional(),
+  content: z.string().max(2_200_000).optional(),
   headers: z.record(z.string(), z.string().max(2_000)).optional(),
   userAgent: z.string().trim().max(200).optional(),
   enabled: z.boolean().default(true),

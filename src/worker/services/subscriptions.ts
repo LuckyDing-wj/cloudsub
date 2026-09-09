@@ -30,6 +30,14 @@ interface NodeRow {
   enabled: number;
 }
 
+/**
+ * Hard cap on nodes served per subscription. Bounds per-request CPU
+ * (rule filtering + rendering) on the Workers free tier (10 ms/request);
+ * a slightly larger row set is fetched so the guard can distinguish
+ * "hit the cap" from "exactly at the cap".
+ */
+export const MAX_SERVE_NODES = 2_000;
+
 export async function issueSubscriptionToken(env: Env, subscriptionId: string, expiresAt?: string): Promise<{ token: string; prefix: string }> {
   if (!env.APP_SECRET) throw new AppError(503, "尚未配置应用密钥", "missing_app_secret");
   const token = randomToken(32);
@@ -87,8 +95,13 @@ export async function generateSubscription(env: Env, token: string, requestedTar
   const cacheTtl = Math.max(60, Math.min(access.cache_ttl || Number(env.SUB_CACHE_TTL) || 300, 86_400));
   if (cached) return { ...cached, name: access.slug || access.name, cacheTtl, tokenId: access.token_id };
   const result = await env.DB.prepare(
-    "SELECT n.* FROM nodes n JOIN subscription_sources ss ON ss.source_id = n.source_id JOIN sources s ON s.id = n.source_id WHERE ss.subscription_id = ? AND s.enabled = 1 AND n.enabled = 1 AND n.present = 1",
-  ).bind(access.subscription_id).all<NodeRow>();
+    "SELECT n.* FROM nodes n JOIN subscription_sources ss ON ss.source_id = n.source_id JOIN sources s ON s.id = n.source_id WHERE ss.subscription_id = ? AND s.enabled = 1 AND n.enabled = 1 AND n.present = 1 LIMIT ?",
+  ).bind(access.subscription_id, MAX_SERVE_NODES + 1).all<NodeRow>();
+  // Reject instead of silently truncating: a cut-down subscription serves an
+  // incomplete client config, which is worse than an explicit failure.
+  if (result.results.length > MAX_SERVE_NODES) {
+    throw new AppError(422, "订阅节点超过上限（" + MAX_SERVE_NODES + "），请先移除部分节点", "subscription_too_many_nodes");
+  }
   const nodes = applySubscriptionRules(result.results.map(rowToNode), parseRules(access.rules_json));
   const rendered = renderSubscription(nodes, target);
   const etag = '"' + await sha256Hex(rendered.body) + '"';

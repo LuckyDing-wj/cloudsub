@@ -9,7 +9,7 @@ import { AppError } from "../shared/errors";
 import { sourceCreateSchema, sourceUpdateSchema } from "../validation";
 
 function sourceSizeLimit(value: string | undefined): number {
-  return Math.max(1024, Math.min(Number(value) || 5_242_880, 10_485_760));
+  return Math.max(1024, Math.min(Number(value) || 2_097_152, 10_485_760));
 }
 
 /** CRUD + refresh + fetch-log routes for upstream/manual data sources. */
