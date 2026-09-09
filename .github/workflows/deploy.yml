@@ -19,4 +19,6 @@ jobs:
       - run: npm run build
       # Migrations must land before the new code is served.
       - run: npx wrangler d1 migrations apply DB --remote
-      - run: npx wrangler deploy
+      # Workers asset uploads occasionally race (workers-sdk #7555); one
+      # retry keeps a flake from failing the whole deployment.
+      - run: npx wrangler deploy || (sleep 10 && npx wrangler deploy)
