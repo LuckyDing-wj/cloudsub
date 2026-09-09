@@ -10,16 +10,20 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": true
   },
+  // Resource IDs are intentionally absent: Wrangler provisions any missing
+  // D1 database / KV namespace by name at deploy time, which is what makes
+  // the "Deploy to Cloudflare" button work on a fresh account (a committed
+  // account-specific id fails with code 10181).
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "cloudsub",
-      "migrations_dir": "migrations","database_id": "b88ce547-a6fb-4b70-8d3e-fb26c615605a"
+      "migrations_dir": "migrations"
     }
   ],
   "kv_namespaces": [
     {
-      "binding": "CACHE","id": "26e63922b23b41a4b41b674493aaac5f"
+      "binding": "CACHE"
     }
   ],
   "vars": {

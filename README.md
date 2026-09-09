@@ -43,13 +43,15 @@
 
 点击 README 顶部的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 后按向导完成部署：Cloudflare 会从本仓库创建项目，构建前端、应用 D1 migrations 后发布 Worker。
 
-> **部署前必做**：`wrangler.jsonc` 中的 `database_id` 与 KV `id` 是**账号专属**的。仓库里提交的是维护者账号的资源 ID，直接部署会报
-> `D1 binding 'DB' references database '<id>' which was not found [code: 10181]`（KV 同理）。
-> 请先替换成自己账号的资源 ID：
+无需事先创建资源：`wrangler.jsonc` **故意不写** `database_id` / KV `id`，Wrangler 会在部署时按名称（`cloudsub` / `CACHE`）自动开通缺失的 D1 与 KV，并应用 migrations。账号里已存在同名资源时会直接复用。
+
+> 如果你 fork 后想把资源固定下来，可以手动创建并回填 ID：
 > ```bash
 > npx wrangler d1 create cloudsub          # 复制 database_id
 > npx wrangler kv namespace create CACHE   # 复制 id
 > ```
+> 但请**不要**把他人账号的 ID 提交进配置 —— 那会在部署时报
+> `D1 binding 'DB' references database '<id>' which was not found [code: 10181]`。
 
 部署向导会要求配置两个互不相同的随机密钥：
 

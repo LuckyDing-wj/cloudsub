@@ -2,20 +2,20 @@
 
 ## Deploy to Cloudflare
 
-公开仓库可使用 README 中的按钮部署，但**必须先替换资源 ID**。
+公开仓库可使用 README 中的按钮直接部署。
 
-`wrangler.jsonc` 里的 `d1_databases[0].database_id` 与 `kv_namespaces[0].id` 是**账号专属**的：直接沿用仓库里的值，部署会以
-`D1 binding 'DB' references database '<id>' which was not found (code: 10181)`
-或 KV 找不到命名空间而失败。Wrangler 不会自动改写已存在的 ID。
+`wrangler.jsonc` **故意不包含** `database_id` 与 KV `id`：Wrangler 4 会在部署时按名称自动开通缺失的 D1（`cloudsub`）与 KV（`CACHE`），已存在同名资源则直接复用 —— 这正是别人 fork 后能一键部署的前提。若把账号专属 ID 提交进配置，他人部署会直接失败：
 
-替换步骤：
+```
+D1 binding 'DB' references database '<id>' which was not found [code: 10181]
+```
+
+需要固定资源时再手动创建并回填：
 
 ```bash
 npx wrangler d1 create cloudsub          # 复制返回的 database_id
 npx wrangler kv namespace create CACHE   # 复制返回的 id
 ```
-
-把两个值填入 `wrangler.jsonc` 后提交，再点部署按钮（或运行 `npm run deploy`）。
 
 `package.json` 的部署命令为：
 
