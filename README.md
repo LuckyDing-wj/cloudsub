@@ -10,11 +10,12 @@
 - **多源导入** — 支持订阅 URL、手动粘贴配置文件，加密存储敏感数据
 - **智能解析** — 自动识别 Base64、Clash YAML、URI 列表、内部 JSON 格式
 - **节点处理** — 解析、去重（指纹）、分组、过滤、正则重命名、排序
-- **边缘测速** — cron 从 Cloudflare 边缘对节点做 TCP 连通探测（记录时延），探测失败自动禁用，恢复后自动重新启用
+- **边缘探测** — cron 从 Cloudflare 边缘对节点做 TCP 连通探测（记录时延）；**连续 3 次**失败才自动停用，一次探测成功即恢复（UDP 协议的 hysteria2 / tuic 不参与探测）
 - **多格式输出** — Mihomo (Clash Meta) / Sing-box / Raw Base64 / JSON
 - **订阅令牌** — 带访问令牌的订阅地址，支持过期时间和令牌轮换
 - **定时刷新** — Cron（默认 `*/30 * * * *`）定时拉取上游订阅，自动更新缓存；失败的数据源按指数退避延后（30 秒起，封顶 6 小时），避免拖垮队列
 - **管理后台** — 轻量 SPA 管理界面，支持数据源、节点、订阅管理
+- **失败告警** — 可选 Telegram 机器人：数据源刷新失败时推送告警（每个故障周期只推一次，避免刷屏）
 - **安全防护** — SSRF 防护 + DNS 预解析、AES-GCM 加密、PBKDF2 密码哈希、CSRF 保护
 
 ## 支持的协议
@@ -71,7 +72,7 @@
 |------|------|
 | `INITIAL_ADMIN_TOKEN` | 为首次初始化增加一层部署侧验证（必须填对才能创建管理员） |
 | `SSRF_DNS_CHECK` | 设为 `0` 可关闭上游地址的 DNS 预解析校验（默认开启） |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | 同时设置后，数据源刷新失败（每个故障周期的首次）推送 Telegram 机器人告警 |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | 同时设置后，数据源刷新失败（每个故障周期的首次）推送 Telegram 机器人告警。两者都要用 `npx wrangler secret put` 写入，不要写进 `wrangler.jsonc` |
 
 除上述密钥外，`wrangler.jsonc` 的 `vars` 还包含 `APP_NAME` / `SESSION_TTL` / `SUB_CACHE_TTL` / `MAX_SOURCE_SIZE`，按需调整。
 

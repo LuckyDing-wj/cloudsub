@@ -30,7 +30,7 @@
     "APP_NAME": "CloudSub",
     "SESSION_TTL": "604800",
     "SUB_CACHE_TTL": "300",
-    "MAX_SOURCE_SIZE": "2097152"
+    "MAX_SOURCE_SIZE": "5242880"
   },
   "triggers": {
     "crons": ["*/30 * * * *"]
