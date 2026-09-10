@@ -34,7 +34,7 @@
 
 | 格式 | target 参数 | 说明 |
 |------|-----------|------|
-| **Mihomo / Clash Meta** | `mihomo` | 完整 YAML 配置，含 proxy-groups（自动选择 / 手动选择）和分流规则（AI / Telegram / 流媒体 / Apple / 国内直连） |
+| **Mihomo / Clash Meta** | `mihomo` | 完整 YAML 配置，含 proxy-groups（自动选择 / 手动选择）和分流规则（AI / Telegram / 流媒体 / Apple / 国内直连）。支持切换到远程规则集模式（见下） |
 | **Sing-box** | `singbox` | 完整 JSON 配置，含 outbounds（selector / urltest / direct / dns）、DNS 分流、路由规则 |
 | **Raw Base64** | `raw` | 标准 Base64 编码的 URI 列表，保留全部传输参数（ws path / host / flow / alpn / obfs 等） |
 | **JSON** | `json` | 内部 NormalizedNode JSON，供 API 对接使用 |
@@ -152,6 +152,31 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 |------|------|
 | `token` | 订阅访问令牌（创建订阅时生成） |
 | `target` | 可选，`mihomo` / `singbox` / `raw` / `json`，默认使用订阅配置的 `defaultTarget` |
+
+## 输出模式与规则集
+
+每个订阅可以单独选择输出形态（目标格式为 Mihomo / Sing-box 时生效）：
+
+| 模式 | 行为 |
+|------|------|
+| `builtin`（默认） | 使用 Worker 内置的固定规则，完全离线、无需客户端额外下载 |
+| `remote` | 只输出对**远程规则集**的引用，客户端自行下载并按 `interval` 刷新 —— 规则更新不用重新部署 |
+| `minimal` | 只输出节点（Mihomo 只给 `proxies:`，Sing-box 只给节点出站），分流策略交给你自己的客户端配置 |
+
+`remote` 模式默认指向 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（更新最勤的规则集仓库），
+Mihomo 取 `meta` 分支的 `.mrs`，Sing-box 取 `sing` 分支的 `.srs`，路径为 `/geo/geosite/<name>.<ext>`。可选规则集：
+
+| 规则集 | 用途 |
+|--------|------|
+| `category-ads-all` | 去广告 / 追踪（→ REJECT，可开关） |
+| `category-ai-!cn` | AI 服务 |
+| `telegram` | Telegram |
+| `netflix` / `youtube` | 流媒体 |
+| `apple` | Apple 服务 |
+| `cn` | 国内直连 |
+
+`preset: custom` 时填自己的仓库根地址（**要含分支名**，例如
+`https://raw.githubusercontent.com/<owner>/<repo>/<branch>`），程序会拼接 `/geo/geosite/<name>.<ext>`。
 
 ## 技术栈
 

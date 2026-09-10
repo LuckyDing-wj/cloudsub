@@ -71,6 +71,18 @@ interface SubscriptionRules {
   excludeName?: string;
   sortBy?: "name" | "protocol" | "source";
   rename?: Array<{ pattern: string; replacement: string }>;
+  output?: OutputProfile;
+}
+
+type OutputMode = "builtin" | "remote" | "minimal";
+type OutputPreset = "metacubex" | "custom";
+
+interface OutputProfile {
+  mode?: OutputMode;
+  preset?: OutputPreset;
+  baseUrl?: string;
+  adBlock?: boolean;
+  updateInterval?: number;
 }
 
 interface Subscription {
@@ -95,11 +107,16 @@ interface SubscriptionFormState {
   excludeName: string;
   sortBy: "name" | "protocol" | "source";
   rename: Array<{ pattern: string; replacement: string }>;
+  outputMode: OutputMode;
+  outputPreset: OutputPreset;
+  outputBaseUrl: string;
+  adBlock: boolean;
 }
 
 const EMPTY_FORM: SubscriptionFormState = {
   name: "", sourceIds: [], enabled: true, expiresAt: "", defaultTarget: "mihomo",
   protocols: [], includeName: "", excludeName: "", sortBy: "name", rename: [],
+  outputMode: "builtin", outputPreset: "metacubex", outputBaseUrl: "", adBlock: true,
 };
 
 const navigation = [
@@ -416,6 +433,22 @@ function SubscriptionForm({ form, setForm, sources, busy, submitLabel, onSubmit 
     </div>
     <fieldset><legend>包含的数据源</legend><div className="check-grid">{sources.map((source) => <label className="check" key={source.id}><input type="checkbox" checked={form.sourceIds.includes(source.id)} onChange={(event) => setForm({ ...form, sourceIds: event.target.checked ? [...form.sourceIds, source.id] : form.sourceIds.filter((id) => id !== source.id) })} />{source.name}</label>)}</div></fieldset>
     <fieldset><legend>协议过滤</legend><div className="check-grid">{PROTOCOLS.map((value) => <label className="check" key={value}><input type="checkbox" checked={form.protocols.includes(value)} onChange={(event) => setForm({ ...form, protocols: event.target.checked ? [...form.protocols, value] : form.protocols.filter((p) => p !== value) })} />{value}</label>)}</div></fieldset>
+    <fieldset><legend>输出与分流</legend>
+      <div className="form-grid">
+        <label>配置模式<select value={form.outputMode} onChange={(event) => setForm({ ...form, outputMode: event.target.value as OutputMode })}>
+          <option value="builtin">内置规则（离线、固定）</option>
+          <option value="remote">远程规则集（自动更新）</option>
+          <option value="minimal">仅节点（自带策略）</option>
+        </select></label>
+        {form.outputMode === "remote" && <label>规则集来源<select value={form.outputPreset} onChange={(event) => setForm({ ...form, outputPreset: event.target.value as OutputPreset })}>
+          <option value="metacubex">MetaCubeX meta-rules-dat（更新最勤）</option>
+          <option value="custom">自定义仓库地址</option>
+        </select></label>}
+      </div>
+      {form.outputMode === "remote" && form.outputPreset === "custom" && <label>规则集仓库地址<input value={form.outputBaseUrl} onChange={(event) => setForm({ ...form, outputBaseUrl: event.target.value })} placeholder="https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/&lt;branch&gt;" /></label>}
+      {form.outputMode === "remote" && <label className="check"><input type="checkbox" checked={form.adBlock} onChange={(event) => setForm({ ...form, adBlock: event.target.checked })} />启用去广告规则（category-ads-all → REJECT）</label>}
+      {form.outputMode !== "builtin" && <p className="muted">远程规则集由客户端自行下载并按 interval 刷新，规则更新无需重新部署；仅对 Mihomo / Sing-box 输出生效。</p>}
+    </fieldset>
     <fieldset><legend>名称过滤（线性时间安全正则，详见 docs/security.md）</legend>
       <div className="form-grid">
         <label>包含匹配<input value={form.includeName} onChange={(event) => setForm({ ...form, includeName: event.target.value })} placeholder="例如：HK|SG|JP" /></label>
@@ -485,6 +518,14 @@ function SubscriptionsPage() {
             excludeName: form.excludeName.trim() || undefined,
             sortBy: form.sortBy,
             rename: form.rename.filter((rule) => rule.pattern.trim()).map((rule) => ({ pattern: rule.pattern.trim(), replacement: rule.replacement })),
+            output: {
+              mode: form.outputMode,
+              ...(form.outputMode === "remote" ? {
+                preset: form.outputPreset,
+                baseUrl: form.outputPreset === "custom" ? form.outputBaseUrl.trim() || undefined : undefined,
+                adBlock: form.adBlock,
+              } : {}),
+            },
           },
         };
         if (editing) {
@@ -524,6 +565,10 @@ function SubscriptionsPage() {
           excludeName: detail.rules.excludeName ?? "",
           sortBy: detail.rules.sortBy ?? "name",
           rename: detail.rules.rename ?? [],
+          outputMode: detail.rules.output?.mode ?? "builtin",
+          outputPreset: detail.rules.output?.preset ?? "metacubex",
+          outputBaseUrl: detail.rules.output?.baseUrl ?? "",
+          adBlock: detail.rules.output?.adBlock ?? true,
         });
         setEditing(detail);
         setShowForm(true);

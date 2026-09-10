@@ -20,9 +20,10 @@ async function subscriptionPreview(env: Env, id: string, targetOverride?: Subscr
     id: row.id, sourceId: row.source_id, fingerprint: row.fingerprint, name: row.name, protocol: row.protocol, server: row.server, port: row.port,
     config: JSON.parse(row.config_json), rawUri: row.raw_uri ?? undefined, enabled: Boolean(row.enabled),
   }));
-  const filtered = applySubscriptionRules(nodes, JSON.parse(subscription.rules_json) as SubscriptionRules);
+  const rules = JSON.parse(subscription.rules_json) as SubscriptionRules;
+  const filtered = applySubscriptionRules(nodes, rules);
   const previewNodes = filtered.slice(0, PREVIEW_MAX_NODES);
-  return { rendered: renderSubscription(previewNodes, targetOverride ?? subscription.default_target), count: filtered.length, truncatedNodes: filtered.length > previewNodes.length };
+  return { rendered: renderSubscription(previewNodes, targetOverride ?? subscription.default_target, rules.output), count: filtered.length, truncatedNodes: filtered.length > previewNodes.length };
 }
 
 /** Latest enabled token per subscription, in a single query. */

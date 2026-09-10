@@ -123,8 +123,9 @@ export async function generateSubscription(env: Env, token: string, requestedTar
   if (result.results.length > MAX_SERVE_NODES) {
     throw new AppError(422, "订阅节点超过上限（" + MAX_SERVE_NODES + "），请先移除部分节点", "subscription_too_many_nodes");
   }
-  const nodes = applySubscriptionRules(result.results.map(rowToNode), parseRules(access.rules_json));
-  const rendered = renderSubscription(nodes, target);
+  const rules = parseRules(access.rules_json);
+  const nodes = applySubscriptionRules(result.results.map(rowToNode), rules);
+  const rendered = renderSubscription(nodes, target, rules.output);
   const etag = '"' + await sha256Hex(rendered.body) + '"';
   // A KV value is capped at 25 MiB. An oversized subscription must skip the
   // cache rather than fail the request with a 500 on the `put`.

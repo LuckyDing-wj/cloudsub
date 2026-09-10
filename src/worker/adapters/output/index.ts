@@ -1,5 +1,5 @@
 import { stringify } from "yaml";
-import type { NormalizedNode, SubscriptionRules, SubscriptionTarget } from "../../../shared/types";
+import type { NormalizedNode, OutputProfile, SubscriptionRules, SubscriptionTarget } from "../../../shared/types";
 import { compileSafePattern, runSafePattern } from "../../security/regex";
 import { decodeBase64Text, encodeBase64Text } from "../input/shared";
 
@@ -193,9 +193,36 @@ function mihomoProxy(node: NormalizedNode): Record<string, unknown> {
   return proxy;
 }
 
-function buildMihomoConfig(nodes: NormalizedNode[]): Record<string, unknown> {
+// ─── Remote rule sets ───────────────────────────────────────────────
+//
+// The worker only emits *references*: the client downloads the rule sets
+// itself and refreshes them on `interval`, so routing and ad-blocking follow
+// upstream without redeploying. Two presets are offered; both publish
+// Mihomo (.mrs) and sing-box (.srs) flavours from the same paths.
+
+// MetaCubeX/meta-rules-dat publishes the two flavours on separate *branches*
+// (`meta` → .mrs for Mihomo, `sing` → .srs for sing-box); the files live under
+// `geo/geosite/`. Verified against the live repository.
+const DEFAULT_RULE_SET_BASES: Record<"mihomo" | "singbox", string> = {
+  mihomo: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta",
+  singbox: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing",
+};
+
+/** Custom preset expects `baseUrl` to already include the branch. */
+function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, file: string): string {
+  const base = profile?.preset === "custom" && profile.baseUrl
+    ? profile.baseUrl.replace(/\/+$/u, "")
+    : DEFAULT_RULE_SET_BASES[kind];
+  return base + "/geo/geosite/" + file;
+}
+
+function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Record<string, unknown> {
   const proxies = nodes.map(mihomoProxy);
   const proxyNames = proxies.map((p) => p.name as string);
+
+  // Nodes only: the client owns the policy (own proxy-groups/rules or a
+  // local preprocessor).
+  if (profile?.mode === "minimal") return { proxies };
 
   const proxyGroups = [
     { name: "🚀 节点选择", type: "select", proxies: ["♻️ 自动选择", ...proxyNames] },
@@ -227,6 +254,46 @@ function buildMihomoConfig(nodes: NormalizedNode[]): Record<string, unknown> {
     "MATCH,🐟 漏网之鱼",
   ];
 
+  if (profile?.mode === "remote") {
+    const interval = Math.max(3_600, Math.min(profile.updateInterval ?? 86_400, 2_592_000));
+    const provider = (name: string, behaviour: string, file: string) => ({
+      [name]: {
+        type: "http",
+        behavior: behaviour,
+        url: ruleSetUrl("mihomo", profile, file),
+        path: "./ruleset/" + file.replace(/\.mrs$/u, ""),
+        interval,
+      },
+    });
+    // Order matters: ads are rejected first, then the special-interest
+    // categories, then geography, then the catch-all.
+    const remoteRules = [
+      ...(profile.adBlock ? ["RULE-SET,category-ads-all,REJECT"] : []),
+      "RULE-SET,category-ai-!cn,🤖 AI",
+      "RULE-SET,telegram,📲 Telegram",
+      "RULE-SET,netflix,🌍 国外媒体",
+      "RULE-SET,youtube,🌍 国外媒体",
+      "RULE-SET,apple,🍎 Apple",
+      "RULE-SET,cn,DIRECT",
+      "MATCH,🐟 漏网之鱼",
+    ];
+    return {
+      proxies,
+      "proxy-groups": proxyGroups,
+      "rule-providers": Object.assign(
+        {},
+        ...(profile.adBlock ? [provider("category-ads-all", "domain", "category-ads-all.mrs")] : []),
+        provider("category-ai-!cn", "domain", "category-ai-!cn.mrs"),
+        provider("telegram", "domain", "telegram.mrs"),
+        provider("netflix", "domain", "netflix.mrs"),
+        provider("youtube", "domain", "youtube.mrs"),
+        provider("apple", "domain", "apple.mrs"),
+        provider("cn", "domain", "cn.mrs"),
+      ),
+      rules: remoteRules,
+    };
+  }
+
   return { proxies, "proxy-groups": proxyGroups, rules };
 }
 
@@ -256,7 +323,7 @@ function singboxTls(node: NormalizedNode): Record<string, unknown> | undefined {
   return tls;
 }
 
-function buildSingboxConfig(nodes: NormalizedNode[]): Record<string, unknown> {
+function buildSingboxConfig(nodes: NormalizedNode[], profile?: OutputProfile): Record<string, unknown> {
   const outbounds: Record<string, unknown>[] = [];
   const tagMap: Array<{ tag: string; protocol: string }> = [];
 
@@ -339,6 +406,54 @@ function buildSingboxConfig(nodes: NormalizedNode[]): Record<string, unknown> {
   const routeRules: Record<string, unknown>[] = [
     { ip_is_private: true, outbound: "DIRECT" },
   ];
+
+  // Nodes only: whatever consumes this supplies its own policy.
+  if (profile?.mode === "minimal") {
+    return {
+      log: { level: "info" },
+      outbounds: proxyTags.length > 0 ? [...outbounds.filter((o) => o.type !== "selector" && o.type !== "urltest")] : outbounds,
+    };
+  }
+
+  if (profile?.mode === "remote") {
+    // sing-box downloads rule sets itself and refreshes them; the worker
+    // only names them.
+    const setTag = (name: string) => "rs-" + name;
+    const sets: Record<string, unknown>[] = [
+      { tag: setTag("ai"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "category-ai-!cn.srs") },
+      { tag: setTag("telegram"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "telegram.srs") },
+      { tag: setTag("media"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "netflix.srs") },
+      { tag: setTag("cn"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "cn.srs") },
+    ];
+    if (profile.adBlock) {
+      sets.unshift({ tag: setTag("ads"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "category-ads-all.srs") });
+    }
+    routeRules.push(
+      ...(profile.adBlock ? [{ rule_set: setTag("ads"), action: "reject" } as Record<string, unknown>] : []),
+      { rule_set: setTag("cn"), action: "route", outbound: "DIRECT" },
+      { rule_set: setTag("ai"), action: "route", outbound: "🚀 节点选择" },
+      { rule_set: setTag("telegram"), action: "route", outbound: "🚀 节点选择" },
+      { rule_set: setTag("media"), action: "route", outbound: "🚀 节点选择" },
+    );
+    return {
+      log: { level: "info" },
+      dns: {
+        servers: dnsServers,
+        rules: [
+          { domain_suffix: [".cn"], server: "local" },
+          { query_type: ["A", "AAAA"], server: proxyTags.length > 0 ? "google" : "local" },
+        ],
+      },
+      outbounds,
+      route: {
+        default_domain_resolver: { server: proxyTags.length > 0 ? "google" : "local" },
+        rule_set: sets,
+        rules: routeRules,
+        final: proxyTags.length > 0 ? "🚀 节点选择" : "DIRECT",
+      },
+    };
+  }
+
   if (proxyTags.length > 0) {
     routeRules.push(
       { domain_suffix: ["openai.com", "anthropic.com", "claude.ai", "gemini.google.com"], outbound: "🚀 节点选择" },
@@ -367,7 +482,7 @@ function buildSingboxConfig(nodes: NormalizedNode[]): Record<string, unknown> {
 
 // ─── Main renderer ───────────────────────────────────────────────────
 
-export function renderSubscription(nodes: NormalizedNode[], target: SubscriptionTarget): { body: string; contentType: string; extension: string } {
+export function renderSubscription(nodes: NormalizedNode[], target: SubscriptionTarget, profile?: OutputProfile): { body: string; contentType: string; extension: string } {
   // JSON targets are emitted compact: pretty-printing inflated large
   // subscriptions by roughly a third for no client benefit, and the bytes
   // are counted against the response, the KV cache entry and the client's
@@ -376,10 +491,10 @@ export function renderSubscription(nodes: NormalizedNode[], target: Subscription
     return { body: JSON.stringify({ version: 1, nodes }), contentType: "application/json; charset=utf-8", extension: "json" };
   }
   if (target === "mihomo") {
-    return { body: stringify(buildMihomoConfig(nodes), { lineWidth: 0 }), contentType: "application/yaml; charset=utf-8", extension: "yaml" };
+    return { body: stringify(buildMihomoConfig(nodes, profile), { lineWidth: 0 }), contentType: "application/yaml; charset=utf-8", extension: "yaml" };
   }
   if (target === "singbox") {
-    return { body: JSON.stringify(buildSingboxConfig(nodes)), contentType: "application/json; charset=utf-8", extension: "json" };
+    return { body: JSON.stringify(buildSingboxConfig(nodes, profile)), contentType: "application/json; charset=utf-8", extension: "json" };
   }
   // raw
   const uris = nodes.map(uriForNode).filter((value): value is string => Boolean(value));

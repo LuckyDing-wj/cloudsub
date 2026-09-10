@@ -57,12 +57,26 @@ const safeNamePattern = z.string().max(200).superRefine((value, context) => {
   if (reason !== null) context.addIssue({ code: "custom", message: reason });
 });
 
+/**
+ * Output shaping. `remote` emits references to an upstream rule set that the
+ * client downloads and refreshes itself, so routing/ad rules stay current
+ * without redeploying the worker.
+ */
+export const outputProfileSchema = z.object({
+  mode: z.enum(["builtin", "remote", "minimal"]).optional(),
+  preset: z.enum(["metacubex", "custom"]).optional(),
+  baseUrl: z.string().trim().url().max(500).optional(),
+  adBlock: z.boolean().optional(),
+  updateInterval: z.number().int().min(3_600).max(2_592_000).optional(),
+});
+
 export const rulesSchema = z.object({
   protocols: z.array(z.string().trim().min(1).max(30)).max(20).optional(),
   includeName: safeNamePattern.optional(),
   excludeName: safeNamePattern.optional(),
   sortBy: z.enum(["name", "protocol", "source"]).optional(),
   rename: z.array(z.object({ pattern: safeNamePattern, replacement: z.string().max(200) })).max(20).optional(),
+  output: outputProfileSchema.optional(),
 });
 
 export const subscriptionCreateSchema = z.object({

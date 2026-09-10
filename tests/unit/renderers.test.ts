@@ -168,6 +168,47 @@ describe("subscription rules and renderers", () => {
     expect(withObfs.outbounds[0].obfs_password).toBeUndefined();
   });
 
+  it("emits remote rule-providers and ad blocking for Mihomo in remote mode", () => {
+    const enabled = applySubscriptionRules(nodes, {});
+    const body = renderSubscription(enabled, "mihomo", { mode: "remote", preset: "metacubex", adBlock: true }).body;
+    expect(body).toContain("rule-providers:");
+    // MetaCubeX publishes the Mihomo flavour on the `meta` branch.
+    expect(body).toContain("raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ads-all.mrs");
+    expect(body).toContain("RULE-SET,category-ads-all,REJECT");
+    expect(body).toContain("RULE-SET,cn,DIRECT");
+    // Rule sets are refreshed by the client, not baked into the worker.
+    expect(body).toContain("interval:");
+  });
+
+  it("omits the ad rule set in Mihomo remote mode when ad blocking is off", () => {
+    const body = renderSubscription(nodes, "mihomo", { mode: "remote", adBlock: false }).body;
+    expect(body).not.toContain("category-ads-all");
+    expect(body).toContain("rule-providers:");
+  });
+
+  it("emits sing-box rule_set references in remote mode", () => {
+    const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", adBlock: true }).body);
+    expect(parsed.route.rule_set.some((set: Record<string, unknown>) => String(set.url).endsWith(".srs"))).toBe(true);
+    // The sing-box flavour lives on the `sing` branch.
+    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/geosite/"))).toBe(true);
+    expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.action === "reject")).toBe(true);
+    expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.outbound === "DIRECT")).toBe(true);
+  });
+
+  it("renders nodes only in minimal mode", () => {
+    const mihomo = JSON.parse(JSON.stringify({ body: renderSubscription(nodes, "mihomo", { mode: "minimal" }).body }));
+    expect(mihomo.body).toContain("proxies:");
+    expect(mihomo.body).not.toContain("proxy-groups:");
+    const singbox = JSON.parse(renderSubscription(nodes, "singbox", { mode: "minimal" }).body);
+    expect(singbox.route).toBeUndefined();
+    expect(singbox.outbounds.every((o: Record<string, unknown>) => o.type !== "selector")).toBe(true);
+  });
+
+  it("honours a custom rule-set base URL", () => {
+    const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "custom", baseUrl: "https://example.com/rules/main/" }).body;
+    expect(body).toContain("https://example.com/rules/main/geo/geosite/cn.mrs");
+  });
+
   it("renders a valid minimal sing-box config when there are no nodes", () => {
     const body = renderSubscription([], "singbox").body;
     const parsed = JSON.parse(body);

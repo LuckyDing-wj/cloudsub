@@ -21,4 +21,30 @@ export interface SubscriptionRules {
   excludeName?: string;
   sortBy?: "name" | "protocol" | "source";
   rename?: Array<{ pattern: string; replacement: string }>;
+  output?: OutputProfile;
+}
+
+/**
+ * How the rendered config is shaped.
+ *
+ * `builtin` keeps the rules that ship with this worker (small, offline,
+ * fixed). `remote` emits references to an upstream rule set instead — the
+ * client downloads and refreshes them on its own schedule, so routing and
+ * ad-blocking stay current without a code change or redeploy. `minimal`
+ * emits nodes only, for clients that already carry their own policy.
+ */
+export interface OutputProfile {
+  mode?: "builtin" | "remote" | "minimal";
+  /** Rule-set preset; `custom` points at a compatible repository. */
+  preset?: "metacubex" | "custom";
+  /**
+   * Rule-set root for the `custom` preset, including the branch, e.g.
+   * `https://raw.githubusercontent.com/<owner>/<repo>/<branch>`.
+   * `/geo/geosite/<name>.mrs|.srs` is appended to it.
+   */
+  baseUrl?: string;
+  /** Block advertising/tracker domains first. */
+  adBlock?: boolean;
+  /** Client-side refresh interval for remote rule sets, in seconds. */
+  updateInterval?: number;
 }
