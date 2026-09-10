@@ -168,15 +168,24 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 | preset | 仓库 | 格式 | 说明 |
 |--------|------|------|------|
 | `metacubex`（默认） | [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) | Mihomo `.mrs`（`meta` 分支）+ Sing-box `.srs`（`sing` 分支） | 同时支持两种内核，每日更新 |
-| `blackmatrix7` | [blackmatrix7/ios_rule_script](https://github.com/blackmatrix7/ios_rule_script) | 仅 Mihomo（classical YAML） | 规则量最大：`Advertising` 约 28 万条、`ChinaMax` 约 12 万条；**Sing-box 输出会自动改用 MetaCubeX** |
-| `custom` | 自填 | 同 MetaCubeX 布局 | 填仓库根地址（**含分支**），程序拼接 `/geo/geosite/<name>.<ext>` |
+| `blackmatrix7` | [blackmatrix7/ios_rule_script](https://github.com/blackmatrix7/ios_rule_script) | 仅 Mihomo（classical YAML） | 规则量最大：`Advertising` 约 28 万条、`ChinaMax` 约 12 万条；**Sing-box 输出自动回退 MetaCubeX** |
+| `senshinya` | [senshinya/singbox_ruleset](https://github.com/senshinya/singbox_ruleset) | 仅 Sing-box（`.srs`，经 jsDelivr） | Sing-box 侧类别最全；**Mihomo 输出自动回退 MetaCubeX** |
+| `custom` | 自填 | 同 MetaCubeX 布局 | 填仓库根地址（**含分支**），程序拼接 `<path>` |
 
-两种预设包含的类别：
+各预设包含的类别（顺序即规则优先级）：
 
 | preset | 类别 |
 |--------|------|
-| `metacubex` | `category-ads-all`（去广告→REJECT，可开关）、`category-ai-!cn`、`telegram`、`netflix`、`youtube`、`apple`、`cn` |
+| `metacubex` | `category-ads-all`（→REJECT，可开关）、`category-ai-!cn`、`telegram`、`netflix`、`youtube`、`apple`、`cn` |
 | `blackmatrix7` | `Advertising`（→REJECT，可开关）、`OpenAI`、`Telegram`、`Netflix`、`YouTube`、`Apple`、`ChinaMax` |
+| `senshinya` | `Advertising`（→REJECT，可开关）、`OpenAI`、`Telegram`、`YouTube`、`Netflix`、`Google`、`Apple`、`ChinaMax` |
+
+**推荐组合**：Mihomo 用 `blackmatrix7`（去广告最强）、Sing-box 用 `senshinya`（类别最全）。两者互不干扰 —— 各自只会作用于支持的内核。
+
+其它输出细节：
+
+- Mihomo 的 `♻️ 自动选择` / `🌐 全部节点` 使用 `include-all-proxies`，节点名不再逐个写进分组（几百个节点时体积显著更小）。
+- Sing-box 的规则集通过 `http_clients: direct-client` **直连下载**，不依赖代理可用性；DoH 服务器带 `domain_resolver`（1.14 起为必需）。
 
 > 规则集由**客户端**下载并按 `interval`（默认 86400 秒）刷新，所以上游更新后无需重新部署。
 

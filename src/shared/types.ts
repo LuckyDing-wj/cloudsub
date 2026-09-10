@@ -36,11 +36,15 @@ export interface SubscriptionRules {
 export interface OutputProfile {
   mode?: "builtin" | "remote" | "minimal";
   /**
-   * Rule-set preset. `metacubex` serves both Mihomo and sing-box; the larger
-   * `blackmatrix7` lists are Mihomo-only (sing-box falls back to MetaCubeX);
-   * `custom` points at a meta-rules-dat-compatible repository.
+   * Rule-set preset.
+   * - `metacubex`    — both kernels, daily updates
+   * - `blackmatrix7` — largest Mihomo lists (Mihomo only; sing-box falls back
+   *                    to MetaCubeX)
+   * - `senshinya`    — largest sing-box list set (sing-box only; Mihomo falls
+   *                    back to MetaCubeX)
+   * - `custom`       — a meta-rules-dat-compatible repository
    */
-  preset?: "metacubex" | "blackmatrix7" | "custom";
+  preset?: "metacubex" | "blackmatrix7" | "senshinya" | "custom";
   /**
    * Rule-set root for the `custom` preset, including the branch, e.g.
    * `https://raw.githubusercontent.com/<owner>/<repo>/<branch>`.

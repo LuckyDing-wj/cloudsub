@@ -221,6 +221,45 @@ describe("subscription rules and renderers", () => {
     expect(JSON.stringify(parsed)).not.toContain("ios_rule_script");
   });
 
+  it("uses the senshinya sing-box rule sets when selected", () => {
+    const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", preset: "senshinya", adBlock: true }).body);
+    const urls = parsed.route.rule_set.map((set: Record<string, unknown>) => String(set.url));
+    expect(urls.some((url: string) => url.includes("senshinya/singbox_ruleset") && url.endsWith("Advertising/Advertising.srs"))).toBe(true);
+    expect(urls.some((url: string) => url.endsWith("ChinaMax/ChinaMax.srs"))).toBe(true);
+    // Rule sets are fetched directly, never through the proxy.
+    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => set.http_client === "direct-client")).toBe(true);
+    expect(parsed.http_clients).toEqual([{ tag: "direct-client" }]);
+    // Private ranges stay direct, and ads are rejected before any service or
+    // geography rule can route them.
+    const rules = parsed.route.rules as Array<Record<string, unknown>>;
+    const rejectIndex = rules.findIndex((rule) => rule.action === "reject");
+    const firstRuleSetIndex = rules.findIndex((rule) => rule.rule_set !== undefined);
+    expect(rejectIndex).toBe(firstRuleSetIndex);
+    // The domestic set exists and is routed direct (not through the proxy).
+    expect(rules.some((rule) => rule.rule_set === "rs-ChinaMax" && rule.outbound === "DIRECT")).toBe(true);
+  });
+
+  it("falls back to MetaCubeX for Mihomo with the senshinya preset", () => {
+    const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "senshinya", adBlock: true }).body;
+    expect(body).toContain("meta-rules-dat/meta/geo/geosite/");
+    expect(body).not.toContain("senshinya");
+  });
+
+  it("keeps every node name out of the Mihomo groups", () => {
+    const many = Array.from({ length: 50 }, (_, index) => ({ ...nodes[0], name: "Node " + index, fingerprint: "f" + index }));
+    const body = renderSubscription(many, "mihomo", { mode: "builtin" }).body;
+    const parsed = JSON.parse(JSON.stringify(body));
+    expect(parsed).toContain("include-all-proxies: true");
+    // 50 nodes must not be repeated across the seven groups.
+    expect((parsed.match(/Node \d+/g) ?? []).length).toBe(50);
+  });
+
+  it("gives the sing-box DoH server an explicit domain resolver", () => {
+    const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "builtin" }).body);
+    const doh = parsed.dns.servers.find((server: Record<string, unknown>) => server.type === "https");
+    expect(doh.domain_resolver).toBe("local");
+  });
+
   it("honours a custom rule-set base URL", () => {
     const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "custom", baseUrl: "https://example.com/rules/main/" }).body;
     expect(body).toContain("https://example.com/rules/main/geo/geosite/cn.mrs");

@@ -64,7 +64,7 @@ const safeNamePattern = z.string().max(200).superRefine((value, context) => {
  */
 export const outputProfileSchema = z.object({
   mode: z.enum(["builtin", "remote", "minimal"]).optional(),
-  preset: z.enum(["metacubex", "blackmatrix7", "custom"]).optional(),
+  preset: z.enum(["metacubex", "blackmatrix7", "senshinya", "custom"]).optional(),
   baseUrl: z.string().trim().url().max(500).optional(),
   adBlock: z.boolean().optional(),
   updateInterval: z.number().int().min(3_600).max(2_592_000).optional(),

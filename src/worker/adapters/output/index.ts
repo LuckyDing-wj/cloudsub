@@ -218,6 +218,50 @@ interface MihomoRuleSet {
 const METACUBEX_MIHOMO_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
 const METACUBEX_SINGBOX_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing";
 const BLACKMATRIX7_MIHOMO_BASE = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash";
+// Compiled .srs rule sets (GPL-3.0, rebuilt daily). Served through jsDelivr
+// because the raw host occasionally throttles the first fetch.
+const SENSINYA_SINGBOX_BASE = "https://cdn.jsdelivr.net/gh/senshinya/singbox_ruleset@main";
+
+interface SingboxRuleSet {
+  tag: string;
+  /** Outbound for route rules; "reject" blocks instead. */
+  outbound: string;
+  /** Path relative to the preset base, including the file name. */
+  path: string;
+  adBlockOnly?: boolean;
+}
+
+/**
+ * sing-box rule sets per preset, ordered: ads first, then services, then the
+ * domestic "direct" set, then the catch-all `final` handles the rest.
+ */
+function singboxRuleSets(profile: OutputProfile | undefined): SingboxRuleSet[] {
+  if (profile?.preset === "senshinya") {
+    const rule = (name: string, outbound: string): SingboxRuleSet => ({
+      tag: name, outbound, path: "rule/" + name + "/" + name + ".srs",
+    });
+    return [
+      { ...rule("Advertising", "reject"), adBlockOnly: true },
+      rule("OpenAI", "🚀 节点选择"),
+      rule("Telegram", "🚀 节点选择"),
+      rule("YouTube", "🚀 节点选择"),
+      rule("Netflix", "🚀 节点选择"),
+      rule("Google", "🚀 节点选择"),
+      rule("Apple", "DIRECT"),
+      rule("ChinaMax", "DIRECT"),
+    ];
+  }
+  const geo = (name: string, outbound: string, tag?: string): SingboxRuleSet => ({
+    tag: tag ?? name, outbound, path: "geo/geosite/" + name + ".srs",
+  });
+  return [
+    { ...geo("category-ads-all", "reject", "ads"), adBlockOnly: true },
+    geo("category-ai-!cn", "🚀 节点选择", "ai"),
+    geo("telegram", "🚀 节点选择"),
+    geo("netflix", "🚀 节点选择", "media"),
+    geo("cn", "DIRECT"),
+  ];
+}
 
 function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
   if (profile?.preset === "blackmatrix7") {
@@ -253,28 +297,41 @@ function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
 function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, path: string): string {
   // `custom` supplies the whole root (branch included).
   if (profile?.preset === "custom" && profile.baseUrl) return profile.baseUrl.replace(/\/+$/u, "") + "/" + path;
-  const base = kind === "mihomo"
-    ? (profile?.preset === "blackmatrix7" ? BLACKMATRIX7_MIHOMO_BASE : METACUBEX_MIHOMO_BASE)
-    : METACUBEX_SINGBOX_BASE;
+  let base: string;
+  if (kind === "mihomo") {
+    // senshinya has no Mihomo flavour: fall back to MetaCubeX.
+    base = profile?.preset === "blackmatrix7" ? BLACKMATRIX7_MIHOMO_BASE : METACUBEX_MIHOMO_BASE;
+  } else {
+    // blackmatrix7 has no sing-box flavour: fall back to MetaCubeX.
+    base = profile?.preset === "senshinya" ? SENSINYA_SINGBOX_BASE : METACUBEX_SINGBOX_BASE;
+  }
   return base + "/" + path;
 }
 
 function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Record<string, unknown> {
   const proxies = nodes.map(mihomoProxy);
-  const proxyNames = proxies.map((p) => p.name as string);
 
   // Nodes only: the client owns the policy (own proxy-groups/rules or a
   // local preprocessor).
   if (profile?.mode === "minimal") return { proxies };
 
+  // `include-all-proxies` keeps every node name out of the file. Listing the
+  // nodes per group duplicated the whole roster across groups — hundreds of
+  // KB once a subscription has a few hundred nodes — for no behavioural
+  // difference: the aggregated groups still expose the same nodes.
+  const MANUAL = "🚀 节点选择";
+  const AUTO = "♻️ 自动选择";
+  const ALL = "🌐 全部节点";
+  const PROXY_CHOICES = [MANUAL, AUTO, ALL, "DIRECT"];
   const proxyGroups = [
-    { name: "🚀 节点选择", type: "select", proxies: ["♻️ 自动选择", ...proxyNames] },
-    { name: "♻️ 自动选择", type: "url-test", proxies: proxyNames, url: "https://www.gstatic.com/generate_204", interval: 300, tolerance: 50 },
-    { name: "🌍 国外媒体", type: "select", proxies: ["🚀 节点选择", "♻️ 自动选择", ...proxyNames] },
-    { name: "📲 Telegram", type: "select", proxies: ["🚀 节点选择", "♻️ 自动选择", ...proxyNames] },
-    { name: "🍎 Apple", type: "select", proxies: ["🚀 节点选择", "DIRECT"] },
-    { name: "🤖 AI", type: "select", proxies: ["🚀 节点选择", "♻️ 自动选择", ...proxyNames] },
-    { name: "🐟 漏网之鱼", type: "select", proxies: ["🚀 节点选择", "DIRECT"] },
+    { name: MANUAL, type: "select", proxies: [AUTO, ALL, "DIRECT"] },
+    { name: AUTO, type: "url-test", "include-all-proxies": true, "exclude-type": "direct", url: "https://www.gstatic.com/generate_204", interval: 300, tolerance: 50 },
+    { name: ALL, type: "select", "include-all-proxies": true },
+    { name: "🌍 国外媒体", type: "select", proxies: PROXY_CHOICES },
+    { name: "📲 Telegram", type: "select", proxies: PROXY_CHOICES },
+    { name: "🍎 Apple", type: "select", proxies: [MANUAL, AUTO, "DIRECT"] },
+    { name: "🤖 AI", type: "select", proxies: PROXY_CHOICES },
+    { name: "🐟 漏网之鱼", type: "select", proxies: [MANUAL, AUTO, ALL, "DIRECT"] },
   ];
 
   const rules = [
@@ -425,7 +482,10 @@ function buildSingboxConfig(nodes: NormalizedNode[], profile?: OutputProfile): R
 
   const dnsServers: Record<string, unknown>[] = [];
   if (proxyTags.length > 0) {
-    dnsServers.push({ type: "https", tag: "google", server: "dns.google", server_port: 443, detour: "🚀 节点选择" });
+    // sing-box 1.14 requires an explicit resolver for a DoH server addressed
+    // by name; without it the lookup falls back to the system resolver and
+    // can leak or fail depending on the platform.
+    dnsServers.push({ type: "https", tag: "google", server: "dns.google", server_port: 443, domain_resolver: "local", detour: "🚀 节点选择" });
   }
   dnsServers.push({ type: "udp", tag: "local", server: "223.5.5.5", detour: "DIRECT" });
 
@@ -443,26 +503,23 @@ function buildSingboxConfig(nodes: NormalizedNode[], profile?: OutputProfile): R
 
   if (profile?.mode === "remote") {
     // sing-box downloads rule sets itself and refreshes them; the worker
-    // only names them.
-    const setTag = (name: string) => "rs-" + name;
-    const sets: Record<string, unknown>[] = [
-      { tag: setTag("ai"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/category-ai-!cn.srs") },
-      { tag: setTag("telegram"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/telegram.srs") },
-      { tag: setTag("media"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/netflix.srs") },
-      { tag: setTag("cn"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/cn.srs") },
-    ];
-    if (profile.adBlock) {
-      sets.unshift({ tag: setTag("ads"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/category-ads-all.srs") });
-    }
-    routeRules.push(
-      ...(profile.adBlock ? [{ rule_set: setTag("ads"), action: "reject" } as Record<string, unknown>] : []),
-      { rule_set: setTag("cn"), action: "route", outbound: "DIRECT" },
-      { rule_set: setTag("ai"), action: "route", outbound: "🚀 节点选择" },
-      { rule_set: setTag("telegram"), action: "route", outbound: "🚀 节点选择" },
-      { rule_set: setTag("media"), action: "route", outbound: "🚀 节点选择" },
-    );
+    // only names them. Downloads go through a direct client so fetching the
+    // rules never depends on the proxy being healthy.
+    const setTag = (tag: string) => "rs-" + tag;
+    const specs = singboxRuleSets(profile).filter((set) => set.adBlockOnly !== true || profile.adBlock);
+    const sets = specs.map((set) => ({
+      tag: setTag(set.tag),
+      type: "remote",
+      format: "binary",
+      url: ruleSetUrl("singbox", profile, set.path),
+      http_client: "direct-client",
+    }));
+    routeRules.push(...specs.map((set) => (set.outbound === "reject"
+      ? { rule_set: setTag(set.tag), action: "reject" }
+      : { rule_set: setTag(set.tag), action: "route", outbound: set.outbound })));
     return {
       log: { level: "info" },
+      http_clients: [{ tag: "direct-client" }],
       dns: {
         servers: dnsServers,
         rules: [
