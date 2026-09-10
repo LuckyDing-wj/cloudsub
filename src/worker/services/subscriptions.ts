@@ -1,7 +1,7 @@
 import type { NormalizedNode, SubscriptionRules, SubscriptionTarget } from "../../shared/types";
 import { applySubscriptionRules, renderSubscription } from "../adapters/output";
 import type { Env } from "../env";
-import { hmacSha256Hex, randomToken, sha256Hex } from "../security/crypto";
+import { decryptJson, encryptJson, hmacSha256Hex, randomToken, sha256Hex } from "../security/crypto";
 import { AppError } from "../shared/errors";
 
 interface AccessRow {
@@ -42,10 +42,31 @@ export async function issueSubscriptionToken(env: Env, subscriptionId: string, e
   if (!env.APP_SECRET) throw new AppError(503, "尚未配置应用密钥", "missing_app_secret");
   const token = randomToken(32);
   const prefix = token.slice(0, 8);
+  // Only the HMAC is needed to authenticate a request, but the plaintext is
+  // kept (encrypted) so the dashboard can reveal the full subscription URL
+  // later — otherwise the token exists only in the create/rotate response.
+  const encrypted = env.DATA_ENCRYPTION_KEY ? await encryptJson(token, env.DATA_ENCRYPTION_KEY) : null;
   await env.DB.prepare(
-    "INSERT INTO subscription_tokens (id, subscription_id, token_hash, token_prefix, enabled, expires_at, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-  ).bind(crypto.randomUUID(), subscriptionId, await hmacSha256Hex(env.APP_SECRET, token), prefix, expiresAt ?? null, new Date().toISOString()).run();
+    "INSERT INTO subscription_tokens (id, subscription_id, token_hash, token_prefix, token_encrypted, enabled, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+  ).bind(crypto.randomUUID(), subscriptionId, await hmacSha256Hex(env.APP_SECRET, token), prefix, encrypted, expiresAt ?? null, new Date().toISOString()).run();
   return { token, prefix };
+}
+
+/**
+ * Reveal the current token of a subscription.
+ *
+ * Tokens issued before the encrypted column existed cannot be recovered —
+ * that case is reported so the UI can ask for a rotation instead of failing
+ * silently.
+ */
+export async function revealSubscriptionToken(env: Env, subscriptionId: string): Promise<string> {
+  if (!env.DATA_ENCRYPTION_KEY) throw new AppError(503, "尚未配置数据加密密钥", "missing_encryption_key");
+  const row = await env.DB.prepare(
+    "SELECT token_encrypted FROM subscription_tokens WHERE subscription_id = ? AND enabled = 1 ORDER BY created_at DESC LIMIT 1",
+  ).bind(subscriptionId).first<{ token_encrypted: string | null }>();
+  if (!row) throw new AppError(404, "订阅不存在或没有可用令牌", "token_not_found");
+  if (!row.token_encrypted) throw new AppError(422, "该令牌创建于升级之前，无法恢复，请轮换令牌", "token_not_recoverable");
+  return decryptJson<string>(row.token_encrypted, env.DATA_ENCRYPTION_KEY);
 }
 
 function parseRules(value: string): SubscriptionRules {

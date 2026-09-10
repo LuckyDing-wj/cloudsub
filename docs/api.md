@@ -47,6 +47,7 @@ DELETE /api/subscriptions/:id
 POST   /api/subscriptions/:id/preview
 POST   /api/subscriptions/:id/rotate-token
 POST   /api/subscriptions/:id/invalidate-cache
+GET    /api/subscriptions/:id/token   # 返回完整令牌（服务端解密），用于随时复制订阅地址
 
 GET /api/settings
 PUT /api/settings

@@ -165,6 +165,10 @@ export const subscriptionTokens = sqliteTable(
     subscriptionId: text("subscription_id").notNull().references(() => subscriptions.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
     tokenPrefix: text("token_prefix").notNull(),
+    // AES-GCM encrypted full token (DATA_ENCRYPTION_KEY) so the dashboard can
+    // reveal the complete subscription URL later. Tokens issued before this
+    // column existed stay NULL and cannot be recovered.
+    tokenEncrypted: text("token_encrypted"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     lastAccessAt: text("last_access_at"),
     expiresAt: text("expires_at"),

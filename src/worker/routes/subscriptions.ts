@@ -3,7 +3,7 @@ import type { NormalizedNode, SubscriptionRules, SubscriptionTarget } from "../.
 import { applySubscriptionRules, renderSubscription } from "../adapters/output";
 import type { AppBindings, Env } from "../env";
 import { body, pageParams, slugify } from "../http";
-import { issueSubscriptionToken } from "../services/subscriptions";
+import { issueSubscriptionToken, revealSubscriptionToken } from "../services/subscriptions";
 import { AppError } from "../shared/errors";
 import { previewSchema, subscriptionCreateSchema, subscriptionUpdateSchema } from "../validation";
 
@@ -123,6 +123,13 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
     const input = await body(context, previewSchema);
     const preview = await subscriptionPreview(context.env, context.req.param("id"), input.target);
     return context.json({ data: { body: preview.rendered.body.slice(0, 200_000), contentType: preview.rendered.contentType, truncated: preview.rendered.body.length > 200_000 || preview.truncatedNodes, nodeCount: preview.count } });
+  });
+
+  app.get("/api/subscriptions/:id/token", async (context) => {
+    const id = context.req.param("id");
+    const exists = await context.env.DB.prepare("SELECT id FROM subscriptions WHERE id = ?").bind(id).first();
+    if (!exists) throw new AppError(404, "订阅不存在", "subscription_not_found");
+    return context.json({ data: { token: await revealSubscriptionToken(context.env, id) } });
   });
 
   app.post("/api/subscriptions/:id/rotate-token", async (context) => {

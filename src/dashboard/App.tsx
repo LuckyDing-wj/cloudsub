@@ -584,13 +584,33 @@ function SubscriptionsPage() {
     setNotice({ tone: copied ? "success" : "error", text: copied ? "订阅地址已复制" : "复制失败，请点击地址框手动复制" });
   }
 
+  /**
+   * Reveal and copy the full URL of an existing subscription. The token is
+   * only stored hashed for authentication, so it is fetched (decrypted
+   * server-side) on demand instead of being listed.
+   */
+  async function copyExistingUrl(item: Subscription) {
+    setNotice(null);
+    await run(async () => {
+      try {
+        const result = await api<{ token: string }>("/api/subscriptions/" + item.id + "/token");
+        const url = window.location.origin + "/sub/" + result.token;
+        setToken({ subscriptionId: item.id, url });
+        setCopyResult(await copyText(url));
+        setNotice({ tone: "success", text: "订阅地址已复制（" + item.name + "）" });
+      } catch (error) {
+        setNotice({ tone: "error", text: error instanceof Error ? error.message : "获取令牌失败" });
+      }
+    });
+  }
+
   const items = list.data?.items ?? [];
   return <section className="panel page-panel">
     <div className="panel-head"><div><p className="eyebrow">Tokenized delivery</p><h2>订阅</h2><p className="muted">组合多个数据源，通过不可猜测令牌安全分发。</p></div><button className="button primary" onClick={() => { resetForm(); setShowForm(!showForm); }}>{showForm ? "取消" : "+ 创建订阅"}</button></div>
     <NoticeBar notice={notice} onClose={() => setNotice(null)} />
     {token && <TokenReveal url={token.url} onCopy={() => void copyTokenUrl()} copyResult={copyResult} busy={busy} />}
     {showForm && <SubscriptionForm form={form} setForm={setForm} sources={options.data ?? []} busy={busy} submitLabel={editing ? "保存修改" : "创建并生成令牌"} onSubmit={submit} />}
-    <div className="card-list">{items.map((item) => <article className="subscription-card" key={item.id}><div className="sub-icon">⌁</div><div className="sub-copy"><div><h3>{item.name}</h3><span className={"status-pill " + (item.enabled ? "good" : "neutral")}>{item.enabled ? "运行中" : "已暂停"}</span></div><p><span className="protocol">{item.default_target}</span> · {item.sourceIds.length} 个数据源 · 令牌 {item.token_prefix ?? "—"}••••</p><small>最近访问：{formatTime(item.last_access_at)}</small></div><div className="actions"><button className="button ghost small" disabled={busy} onClick={() => void openEdit(item)}>编辑</button><button className="button ghost small" disabled={busy} onClick={() => void showPreview(item)}>预览</button><button className="button ghost small" disabled={busy} onClick={() => void rotate(item)}>轮换令牌</button><button className="button danger small" disabled={busy} onClick={() => void remove(item)}>删除</button></div></article>)}</div>
+    <div className="card-list">{items.map((item) => <article className="subscription-card" key={item.id}><div className="sub-icon">⌁</div><div className="sub-copy"><div><h3>{item.name}</h3><span className={"status-pill " + (item.enabled ? "good" : "neutral")}>{item.enabled ? "运行中" : "已暂停"}</span></div><p><span className="protocol">{item.default_target}</span> · {item.sourceIds.length} 个数据源 · 令牌 {item.token_prefix ?? "—"}••••</p><small>最近访问：{formatTime(item.last_access_at)}</small></div><div className="actions"><button className="button ghost small" disabled={busy} onClick={() => void copyExistingUrl(item)}>复制链接</button><button className="button ghost small" disabled={busy} onClick={() => void openEdit(item)}>编辑</button><button className="button ghost small" disabled={busy} onClick={() => void showPreview(item)}>预览</button><button className="button ghost small" disabled={busy} onClick={() => void rotate(item)}>轮换令牌</button><button className="button danger small" disabled={busy} onClick={() => void remove(item)}>删除</button></div></article>)}</div>
     <ListState state={list} empty={items.length === 0 ? <div className="empty">还没有订阅。选择数据源后创建第一条。</div> : null} />
     <Pagination page={page} pageSize={25} total={list.data?.total ?? 0} onPage={setPage} label="订阅分页" />
     {preview && <Modal title={preview.error ? "预览失败" : preview.nodeCount + " 个节点"} eyebrow="输出预览" onClose={() => setPreview(null)}>{preview.error ? <div className="callout error" role="alert">{preview.error}</div> : <PreviewBody body={preview.body} />}</Modal>}
