@@ -65,9 +65,15 @@ const safeNamePattern = z.string().max(200).superRefine((value, context) => {
 export const outputProfileSchema = z.object({
   mode: z.enum(["builtin", "remote", "minimal"]).optional(),
   preset: z.enum(["metacubex", "blackmatrix7", "senshinya", "custom"]).optional(),
-  baseUrl: z.string().trim().url().max(500).optional(),
+  // Rule sets control routing and ad blocking; serving them over plain HTTP
+  // would let an on-path attacker rewrite them, so HTTPS is mandatory.
+  baseUrl: z.string().trim().url().max(500).regex(/^https:\/\//u, "规则集仓库地址必须使用 HTTPS").optional(),
   adBlock: z.boolean().optional(),
   updateInterval: z.number().int().min(3_600).max(2_592_000).optional(),
+}).superRefine((value, context) => {
+  if (value.preset === "custom" && !value.baseUrl) {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "自定义规则集必须填写仓库地址" });
+  }
 });
 
 export const rulesSchema = z.object({

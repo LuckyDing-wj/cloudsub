@@ -362,8 +362,14 @@ function NodesPage() {
   const withOverrides = useCallback((items: NodeItem[]) => items.map((item) => (overrides[item.id] === undefined ? item : { ...item, enabled: overrides[item.id] })), [overrides]);
   const subscriptionItems = useMemo(() => withOverrides(subscriptionNodes.data?.items ?? []), [subscriptionNodes.data, withOverrides]);
   const standaloneItems = useMemo(() => withOverrides(standaloneNodes.data?.items ?? []), [standaloneNodes.data, withOverrides]);
+  // Overrides are a latency optimization only; whenever fresh data arrives
+  // (page change, search, retry) the server's truth must win again — stale
+  // overrides would hide probe auto-disables and grow the map forever.
+  useEffect(() => { setOverrides({}); }, [subscriptionNodes.data, standaloneNodes.data]);
 
-  async function toggle(item: NodeItem) {
+  // Stable identity: NodeTable is memoized, and a fresh function reference
+  // per render would defeat the memo (every keystroke re-rendering 2×25 rows).
+  const toggle = useCallback(async (item: NodeItem) => {
     const next = item.enabled ? 0 : 1;
     setNotice(null);
     setOverrides((previous) => ({ ...previous, [item.id]: next }));
@@ -382,7 +388,7 @@ function NodesPage() {
         setBusyId(null);
       }
     });
-  }
+  }, [run]);
 
   return <section className="panel page-panel">
     <div className="panel-head"><div><p className="eyebrow">Normalized inventory</p><h2>节点</h2><p className="muted">敏感字段默认脱敏；禁用状态会在上游刷新后保留。</p></div><span className="status-pill neutral">{(subscriptionNodes.data?.total ?? 0) + (standaloneNodes.data?.total ?? 0)} 条结果</span></div>
@@ -488,6 +494,18 @@ function PreviewBody({ body }: { body: string }) {
   </div>;
 }
 
+/**
+ * ISO timestamp → `<input type="datetime-local">` value in the LOCAL zone.
+ * `iso.slice(0, 16)` handed UTC strings to an input that interprets values
+ * as local time, so every edit/save round-trip shifted the stored expiry by
+ * the timezone offset (8 hours for UTC+8 users).
+ */
+function toLocalInputValue(iso: string): string {
+  const date = new Date(iso);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
+}
+
 function SubscriptionsPage() {
   const [page, setPage] = useState(1);
   const [busy, run] = useBusy();
@@ -497,7 +515,7 @@ function SubscriptionsPage() {
   const [form, setForm] = useState<SubscriptionFormState>(EMPTY_FORM);
   const [token, setToken] = useState<{ subscriptionId: string; url: string } | null>(null);
   const [copyResult, setCopyResult] = useState<boolean | null>(null);
-  const [preview, setPreview] = useState<{ body: string; nodeCount: number; error: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ body: string; nodeCount: number; truncated?: boolean; error: string | null } | null>(null);
 
   const list = usePagedList<Subscription>("/api/subscriptions", {}, page, 25);
   const options = useAsync(async () => api<{ items: SourceOption[] }>("/api/sources/options").then((data) => data.items), []);
@@ -562,7 +580,7 @@ function SubscriptionsPage() {
           name: detail.name,
           sourceIds: detail.sourceIds,
           enabled: Boolean(detail.enabled),
-          expiresAt: detail.expires_at ? detail.expires_at.slice(0, 16) : "",
+          expiresAt: detail.expires_at ? toLocalInputValue(detail.expires_at) : "",
           defaultTarget: detail.default_target as SubscriptionTarget,
           protocols: detail.rules.protocols ?? [],
           includeName: detail.rules.includeName ?? "",
@@ -618,8 +636,8 @@ function SubscriptionsPage() {
     setNotice(null);
     await run(async () => {
       try {
-        const result = await api<{ body: string; nodeCount: number }>("/api/subscriptions/" + item.id + "/preview", { method: "POST", body: { target: item.default_target } });
-        setPreview({ body: result.body, nodeCount: result.nodeCount, error: null });
+        const result = await api<{ body: string; nodeCount: number; truncated?: boolean }>("/api/subscriptions/" + item.id + "/preview", { method: "POST", body: { target: item.default_target } });
+        setPreview({ body: result.body, nodeCount: result.nodeCount, truncated: Boolean(result.truncated), error: null });
       } catch (error) {
         setPreview({ body: "", nodeCount: 0, error: error instanceof Error ? error.message : "预览失败" });
       }
@@ -662,7 +680,10 @@ function SubscriptionsPage() {
     <div className="card-list">{items.map((item) => <article className="subscription-card" key={item.id}><div className="sub-icon">⌁</div><div className="sub-copy"><div><h3>{item.name}</h3><span className={"status-pill " + (item.enabled ? "good" : "neutral")}>{item.enabled ? "运行中" : "已暂停"}</span></div><p><span className="protocol">{item.default_target}</span> · {item.sourceIds.length} 个数据源 · 令牌 {item.token_prefix ?? "—"}••••</p><small>最近访问：{formatTime(item.last_access_at)}</small></div><div className="actions"><button className="button ghost small" disabled={busy} onClick={() => void copyExistingUrl(item)}>复制链接</button><button className="button ghost small" disabled={busy} onClick={() => void openEdit(item)}>编辑</button><button className="button ghost small" disabled={busy} onClick={() => void showPreview(item)}>预览</button><button className="button ghost small" disabled={busy} onClick={() => void rotate(item)}>轮换令牌</button><button className="button danger small" disabled={busy} onClick={() => void remove(item)}>删除</button></div></article>)}</div>
     <ListState state={list} empty={items.length === 0 ? <div className="empty">还没有订阅。选择数据源后创建第一条。</div> : null} />
     <Pagination page={page} pageSize={25} total={list.data?.total ?? 0} onPage={setPage} label="订阅分页" />
-    {preview && <Modal title={preview.error ? "预览失败" : preview.nodeCount + " 个节点"} eyebrow="输出预览" onClose={() => setPreview(null)}>{preview.error ? <div className="callout error" role="alert">{preview.error}</div> : <PreviewBody body={preview.body} />}</Modal>}
+    {preview && <Modal title={preview.error ? "预览失败" : preview.nodeCount + " 个节点"} eyebrow="输出预览" onClose={() => setPreview(null)}>{preview.error ? <div className="callout error" role="alert">{preview.error}</div> : <>
+      {preview.truncated && <div className="callout">预览已截断（订阅共 {preview.nodeCount} 个节点）。完整输出请使用订阅链接获取。</div>}
+      <PreviewBody body={preview.body} />
+    </>}</Modal>}
   </section>;
 }
 

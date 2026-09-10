@@ -182,6 +182,8 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 
 **推荐组合**：Mihomo 用 `blackmatrix7`（去广告最强）、Sing-box 用 `senshinya`（类别最全）。两者互不干扰 —— 各自只会作用于支持的内核。
 
+`remote` 模式自动附带 IP 级直连兜底（Mihomo `GEOIP,CN,DIRECT`、Sing-box `geoip-cn` 规则集，固定来自 MetaCubeX），未命中域名规则的国内 IP 流量不会误走代理。Mihomo 的 `.mrs` 规则集会显式声明 `format: mrs`（Mihomo 不会按扩展名推断格式）。
+
 其它输出细节：
 
 - Mihomo 的 `♻️ 自动选择` / `🌐 全部节点` 使用 `include-all-proxies`，节点名不再逐个写进分组（几百个节点时体积显著更小）。

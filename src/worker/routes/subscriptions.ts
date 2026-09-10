@@ -11,11 +11,24 @@ import { previewSchema, subscriptionCreateSchema, subscriptionUpdateSchema } fro
 // Rendering tens of thousands of nodes into a modal is both slow and
 // useless, so the node set is capped and the UI says so.
 const PREVIEW_MAX_NODES = 2_000;
+// The fetch itself is capped too: without a LIMIT a huge inventory is pulled
+// and parsed row by row just to truncate it afterwards. The overshoot covers
+// rows the rules filter out before the PREVIEW_MAX_NODES cut.
+const PREVIEW_FETCH_LIMIT = PREVIEW_MAX_NODES * 2;
+
+function safePreviewSlice(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max;
+  // Never cut between the halves of a UTF-16 surrogate pair (emoji node
+  // names are common) — that would produce invalid JSON/YAML downstream.
+  while (end > 0 && (text.charCodeAt(end - 1) & 0xfc00) === 0xd800) end -= 1;
+  return text.slice(0, end);
+}
 
 async function subscriptionPreview(env: Env, id: string, targetOverride?: SubscriptionTarget): Promise<{ rendered: ReturnType<typeof renderSubscription>; count: number; truncatedNodes: boolean }> {
   const subscription = await env.DB.prepare("SELECT default_target, rules_json FROM subscriptions WHERE id = ?").bind(id).first<{ default_target: SubscriptionTarget; rules_json: string }>();
   if (!subscription) throw new AppError(404, "订阅不存在", "subscription_not_found");
-  const result = await env.DB.prepare("SELECT n.* FROM nodes n JOIN subscription_sources ss ON ss.source_id = n.source_id JOIN sources s ON s.id = n.source_id WHERE ss.subscription_id = ? AND s.enabled = 1 AND n.enabled = 1 AND n.present = 1").bind(id).all<any>();
+  const result = await env.DB.prepare("SELECT n.* FROM nodes n JOIN subscription_sources ss ON ss.source_id = n.source_id JOIN sources s ON s.id = n.source_id WHERE ss.subscription_id = ? AND s.enabled = 1 AND n.enabled = 1 AND n.present = 1 LIMIT ?").bind(id, PREVIEW_FETCH_LIMIT).all<any>();
   const nodes: NormalizedNode[] = result.results.map((row) => ({
     id: row.id, sourceId: row.source_id, fingerprint: row.fingerprint, name: row.name, protocol: row.protocol, server: row.server, port: row.port,
     config: JSON.parse(row.config_json), rawUri: row.raw_uri ?? undefined, enabled: Boolean(row.enabled),
@@ -23,7 +36,7 @@ async function subscriptionPreview(env: Env, id: string, targetOverride?: Subscr
   const rules = JSON.parse(subscription.rules_json) as SubscriptionRules;
   const filtered = applySubscriptionRules(nodes, rules);
   const previewNodes = filtered.slice(0, PREVIEW_MAX_NODES);
-  return { rendered: renderSubscription(previewNodes, targetOverride ?? subscription.default_target, rules.output), count: filtered.length, truncatedNodes: filtered.length > previewNodes.length };
+  return { rendered: renderSubscription(previewNodes, targetOverride ?? subscription.default_target, rules.output), count: filtered.length, truncatedNodes: filtered.length > previewNodes.length || result.results.length >= PREVIEW_FETCH_LIMIT };
 }
 
 /** Latest enabled token per subscription, in a single query. */
@@ -64,12 +77,23 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const baseSlug = slugify(input.name);
-    const collision = await context.env.DB.prepare("SELECT id FROM subscriptions WHERE slug = ?").bind(baseSlug).first();
-    const slug = collision ? baseSlug + "-" + id.slice(0, 6) : baseSlug;
-    await context.env.DB.batch([
+    const statements = (slug: string): D1PreparedStatement[] => [
       context.env.DB.prepare("INSERT INTO subscriptions (id, name, slug, enabled, default_target, rules_json, revision, expires_at, cache_ttl, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)").bind(id, input.name, slug, input.enabled ? 1 : 0, input.defaultTarget, JSON.stringify(input.rules), input.expiresAt ?? null, input.cacheTtl, now, now),
       ...[...new Set(input.sourceIds)].map((sourceId) => context.env.DB.prepare("INSERT INTO subscription_sources (subscription_id, source_id) VALUES (?, ?)").bind(id, sourceId)),
-    ]);
+    ];
+    const collision = await context.env.DB.prepare("SELECT id FROM subscriptions WHERE slug = ?").bind(baseSlug).first();
+    let slug = collision ? baseSlug + "-" + id.slice(0, 6) : baseSlug;
+    try {
+      await context.env.DB.batch(statements(slug));
+    } catch (error) {
+      // Two concurrent creates with the same name can both pass the
+      // pre-check above; only one wins the UNIQUE(slug) constraint, the
+      // other surfaces as a 500 unless retried with a fresh suffix.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/UNIQUE/i.test(message)) throw error;
+      slug = baseSlug + "-" + crypto.randomUUID().slice(0, 8);
+      await context.env.DB.batch(statements(slug));
+    }
     const token = await issueSubscriptionToken(context.env, id, input.expiresAt ?? undefined);
     return context.json({ data: { id, slug, token: token.token, tokenPrefix: token.prefix } }, 201);
   });
@@ -123,7 +147,7 @@ export function registerSubscriptionRoutes(app: Hono<AppBindings>): void {
   app.post("/api/subscriptions/:id/preview", async (context) => {
     const input = await body(context, previewSchema);
     const preview = await subscriptionPreview(context.env, context.req.param("id"), input.target);
-    return context.json({ data: { body: preview.rendered.body.slice(0, 200_000), contentType: preview.rendered.contentType, truncated: preview.rendered.body.length > 200_000 || preview.truncatedNodes, nodeCount: preview.count } });
+    return context.json({ data: { body: safePreviewSlice(preview.rendered.body, 200_000), contentType: preview.rendered.contentType, truncated: preview.rendered.body.length > 200_000 || preview.truncatedNodes, nodeCount: preview.count } });
   });
 
   app.get("/api/subscriptions/:id/token", async (context) => {

@@ -26,7 +26,10 @@ describe("nextEnabledState (probe decision machine)", () => {
   });
 
   it("keeps an auto-disabled node off while it stays unreachable", () => {
-    expect(nextEnabledState(false, true, false)).toEqual({ enabled: 0, autoDisabled: 1 });
+    // `enabled: null` (not 0): the flag is already 0, and reporting a change
+    // would bump subscription revisions — and thrash the KV cache — on every
+    // cron run even though nothing changed.
+    expect(nextEnabledState(false, true, false)).toEqual({ enabled: null, autoDisabled: 1 });
   });
 
   it("never touches a manually disabled node", () => {

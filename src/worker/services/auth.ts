@@ -60,15 +60,18 @@ export async function isLoginLocked(env: Env, key: string): Promise<boolean> {
 export async function recordLoginFailure(env: Env, key: string): Promise<void> {
   const now = new Date();
   const windowStart = new Date(now.getTime() - LOCKOUT_MS).toISOString();
-  const prior = await env.DB.prepare("SELECT attempts, updated_at FROM login_attempts WHERE key = ?")
-    .bind(key).first<{ attempts: number; updated_at: string }>();
-  // A key whose last attempt predates the lock window starts counting fresh.
-  const count = prior && prior.updated_at >= windowStart ? prior.attempts + 1 : 1;
-  const lockedUntil = count >= MAX_LOGIN_ATTEMPTS ? new Date(now.getTime() + LOCKOUT_MS).toISOString() : null;
+  const lockedUntil = new Date(now.getTime() + LOCKOUT_MS).toISOString();
+  // Atomic upsert: a read-modify-write here loses updates under concurrent
+  // failures (parallel brute-force requests all read the same count), so the
+  // increment happens inside the statement. In a SQLite upsert the
+  // unqualified `updated_at`/`attempts` refer to the pre-update row.
   await env.DB.prepare(
-    "INSERT INTO login_attempts (key, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) " +
-    "ON CONFLICT(key) DO UPDATE SET attempts = excluded.attempts, locked_until = excluded.locked_until, updated_at = excluded.updated_at",
-  ).bind(key, count, lockedUntil, now.toISOString()).run();
+    "INSERT INTO login_attempts (key, attempts, locked_until, updated_at) VALUES (?, 1, NULL, ?) " +
+    "ON CONFLICT(key) DO UPDATE SET " +
+    "attempts = CASE WHEN updated_at >= ? THEN attempts + 1 ELSE 1 END, " +
+    "locked_until = CASE WHEN (CASE WHEN updated_at >= ? THEN attempts + 1 ELSE 1 END) >= ? THEN ? ELSE NULL END, " +
+    "updated_at = excluded.updated_at",
+  ).bind(key, now.toISOString(), windowStart, windowStart, MAX_LOGIN_ATTEMPTS, lockedUntil).run();
 }
 
 export async function clearLoginFailures(env: Env, key: string): Promise<void> {

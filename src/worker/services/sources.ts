@@ -191,7 +191,11 @@ export async function refreshSource(env: Env, sourceId: string, options: { force
     // Any failure leaves the previously promoted node set fully intact:
     // staging writes never touch `nodes`, and the promotion batch is atomic.
     const message = publicErrorMessage(error).slice(0, 500);
-    const failureCount = Math.min((source.failure_count ?? 0) + 1, 8);
+    // Capped high enough that the 30s doubling reaches the 6h backoff
+    // ceiling (2^13 * 30s ≈ 68h > 6h); a cap of 8 topped out at ~64 minutes
+    // and kept hammering dead sources — plus their two DoH lookups — every
+    // hour.
+    const failureCount = Math.min((source.failure_count ?? 0) + 1, 14);
     const nextRetry = failureBackoffIso(failureCount);
     await env.DB.batch([
       env.DB.prepare("UPDATE sources SET last_error = ?, failure_count = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?").bind(message, failureCount, nextRetry, now, sourceId),

@@ -48,7 +48,11 @@ export interface ProbeDecision {
  */
 export function nextEnabledState(prevEnabled: boolean, prevAutoDisabled: boolean, probeOk: boolean, prevFailCount = 0): ProbeDecision {
   if (prevAutoDisabled) {
-    return probeOk ? { enabled: 1, autoDisabled: 0 } : { enabled: 0, autoDisabled: 1 };
+    // Staying disabled writes `enabled: null` (COALESCE keeps the stored 0):
+    // returning 0 here would make every cron run count as a "change" and
+    // bump subscription revisions forever, permanently invalidating their
+    // KV caches for a state that did not change.
+    return probeOk ? { enabled: 1, autoDisabled: 0 } : { enabled: null, autoDisabled: 1 };
   }
   if (!prevEnabled) return { enabled: null, autoDisabled: 0 };
   if (probeOk) return { enabled: null, autoDisabled: 0 };

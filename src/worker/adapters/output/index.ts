@@ -210,6 +210,12 @@ interface MihomoRuleSet {
   tag: string;
   policy: string;
   behaviour: "domain" | "classical";
+  /**
+   * Mihomo does NOT infer the format from the URL extension (`ParseRuleFormat`
+   * defaults to YAML), so a binary .mrs provider must state `format: mrs`
+   * explicitly or rule-set loading fails at startup.
+   */
+  format: "yaml" | "mrs";
   /** Path relative to the preset's base, including the file name. */
   path: string;
   adBlockOnly?: boolean;
@@ -229,6 +235,8 @@ interface SingboxRuleSet {
   /** Path relative to the preset base, including the file name. */
   path: string;
   adBlockOnly?: boolean;
+  /** Pin this entry to a specific base regardless of the chosen preset. */
+  base?: string;
 }
 
 /**
@@ -236,6 +244,11 @@ interface SingboxRuleSet {
  * domestic "direct" set, then the catch-all `final` handles the rest.
  */
 function singboxRuleSets(profile: OutputProfile | undefined): SingboxRuleSet[] {
+  // geosite sets only match domains: traffic that arrives as a bare IP (or a
+  // foreign service reached by IP) would fall through to `final` and be sent
+  // through the proxy. The GeoIP-CN set — pinned to MetaCubeX, which every
+  // preset falls back to for this flavour — keeps domestic IPs direct.
+  const geoipCn: SingboxRuleSet = { tag: "geoip-cn", outbound: "DIRECT", path: "geo/geoip/cn.srs", base: METACUBEX_SINGBOX_BASE };
   if (profile?.preset === "senshinya") {
     const rule = (name: string, outbound: string): SingboxRuleSet => ({
       tag: name, outbound, path: "rule/" + name + "/" + name + ".srs",
@@ -249,6 +262,7 @@ function singboxRuleSets(profile: OutputProfile | undefined): SingboxRuleSet[] {
       rule("Google", "🚀 节点选择"),
       rule("Apple", "DIRECT"),
       rule("ChinaMax", "DIRECT"),
+      geoipCn,
     ];
   }
   const geo = (name: string, outbound: string, tag?: string): SingboxRuleSet => ({
@@ -260,6 +274,7 @@ function singboxRuleSets(profile: OutputProfile | undefined): SingboxRuleSet[] {
     geo("telegram", "🚀 节点选择"),
     geo("netflix", "🚀 节点选择", "media"),
     geo("cn", "DIRECT"),
+    geoipCn,
   ];
 }
 
@@ -268,7 +283,7 @@ function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
     // Far larger lists than MetaCubeX (Advertising alone is ~280k entries),
     // at the cost of a classical YAML download.
     const clash = (name: string, policy: string): MihomoRuleSet => ({
-      tag: name, policy, behaviour: "classical", path: name + "/" + name + ".yaml",
+      tag: name, policy, behaviour: "classical", format: "yaml", path: name + "/" + name + ".yaml",
     });
     return [
       { ...clash("Advertising", "REJECT"), adBlockOnly: true },
@@ -281,7 +296,7 @@ function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
     ];
   }
   const geo = (name: string, policy: string): MihomoRuleSet => ({
-    tag: name, policy, behaviour: "domain", path: "geo/geosite/" + name + ".mrs",
+    tag: name, policy, behaviour: "domain", format: "mrs", path: "geo/geosite/" + name + ".mrs",
   });
   return [
     { ...geo("category-ads-all", "REJECT"), adBlockOnly: true },
@@ -294,7 +309,10 @@ function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
   ];
 }
 
-function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, path: string): string {
+function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, path: string, baseOverride?: string): string {
+  // An entry pinned to a base (e.g. the GeoIP-CN set always comes from
+  // MetaCubeX) wins over the preset's own flavour.
+  if (baseOverride) return baseOverride + "/" + path;
   // `custom` supplies the whole root (branch included).
   if (profile?.preset === "custom" && profile.baseUrl) return profile.baseUrl.replace(/\/+$/u, "") + "/" + path;
   let base: string;
@@ -358,9 +376,12 @@ function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Re
     const interval = Math.max(3_600, Math.min(profile.updateInterval ?? 86_400, 2_592_000));
     const sets = mihomoRuleSets(profile).filter((set) => !set.adBlockOnly || profile.adBlock);
     // Order matters: ads are rejected first, then the special-interest
-    // categories, then geography, then the catch-all.
+    // categories, then geography (geosite sets are domain-only, so the
+    // GEOIP rule still catches direct-IP domestic traffic), then the
+    // catch-all.
     const remoteRules = [
       ...sets.map((set) => "RULE-SET," + set.tag + "," + set.policy),
+      "GEOIP,CN,DIRECT",
       "MATCH,🐟 漏网之鱼",
     ];
     return {
@@ -369,6 +390,9 @@ function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Re
       "rule-providers": Object.fromEntries(sets.map((set) => [set.tag, {
         type: "http",
         behavior: set.behaviour,
+        // Without this Mihomo parses a binary .mrs as YAML and the rule
+        // set fails to load (the extension is never inferred).
+        format: set.format,
         url: ruleSetUrl("mihomo", profile, set.path),
         path: "./ruleset/" + set.tag,
         interval,
@@ -511,12 +535,23 @@ function buildSingboxConfig(nodes: NormalizedNode[], profile?: OutputProfile): R
       tag: setTag(set.tag),
       type: "remote",
       format: "binary",
-      url: ruleSetUrl("singbox", profile, set.path),
+      url: ruleSetUrl("singbox", profile, set.path, set.base),
       http_client: "direct-client",
     }));
-    routeRules.push(...specs.map((set) => (set.outbound === "reject"
-      ? { rule_set: setTag(set.tag), action: "reject" }
-      : { rule_set: setTag(set.tag), action: "route", outbound: set.outbound })));
+    // Reject and GeoIP-direct rules stay useful (and reference no proxy
+    // outbound) even when every node is disabled — exactly the state probe
+    // leaves behind. Proxy-routed rules must be guarded: with zero nodes the
+    // selectors do not exist and sing-box refuses to start on the dangling
+    // outbound reference.
+    routeRules.push(...specs.filter((set) => set.outbound === "reject")
+      .map((set) => ({ rule_set: setTag(set.tag), action: "reject" })));
+    if (proxyTags.length > 0) {
+      routeRules.push(...specs.filter((set) => set.outbound !== "reject")
+        .map((set) => ({ rule_set: setTag(set.tag), action: "route", outbound: set.outbound })));
+    }
+    // IP-level catch: domestic IPs go direct even when no geosite rule
+    // matched. Evaluated last, before `final`.
+    routeRules.push({ rule_set: setTag("geoip-cn"), action: "route", outbound: "DIRECT" });
     return {
       log: { level: "info" },
       http_clients: [{ tag: "direct-client" }],

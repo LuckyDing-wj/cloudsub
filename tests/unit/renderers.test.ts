@@ -190,9 +190,45 @@ describe("subscription rules and renderers", () => {
     const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", adBlock: true }).body);
     expect(parsed.route.rule_set.some((set: Record<string, unknown>) => String(set.url).endsWith(".srs"))).toBe(true);
     // The sing-box flavour lives on the `sing` branch.
-    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/geosite/"))).toBe(true);
+    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/"))).toBe(true);
     expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.action === "reject")).toBe(true);
     expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.outbound === "DIRECT")).toBe(true);
+  });
+
+  it("adds an IP-level direct rule to remote mode (Mihomo GEOIP, sing-box geoip-cn)", () => {
+    // geosite sets only match domains; without the IP rules, direct-IP
+    // domestic traffic falls through to `final` and goes through the proxy.
+    const mihomo = renderSubscription(nodes, "mihomo", { mode: "remote", adBlock: true }).body;
+    expect(mihomo).toContain("GEOIP,CN,DIRECT");
+    // GEOIP runs after the rule sets, before the catch-all.
+    expect(mihomo.indexOf("GEOIP,CN,DIRECT")).toBeGreaterThan(mihomo.indexOf("RULE-SET"));
+    expect(mihomo.indexOf("GEOIP,CN,DIRECT")).toBeLessThan(mihomo.indexOf("MATCH,"));
+    const singbox = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", adBlock: true }).body);
+    expect(singbox.route.rule_set.some((set: Record<string, unknown>) => String(set.url).endsWith("geo/geoip/cn.srs"))).toBe(true);
+    expect(singbox.route.rules.some((rule: Record<string, unknown>) => rule.rule_set === "rs-geoip-cn" && rule.outbound === "DIRECT")).toBe(true);
+    // The geoip set is pinned to MetaCubeX even under the senshinya preset.
+    const senshinya = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", preset: "senshinya", adBlock: true }).body);
+    expect(senshinya.route.rule_set.find((set: Record<string, unknown>) => set.tag === "rs-geoip-cn").url).toContain("meta-rules-dat/sing");
+  });
+
+  it("states the provider format explicitly (mihomo never infers it)", () => {
+    const metacubex = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "metacubex", adBlock: true }).body;
+    // .mrs is binary: without `format: mrs` mihomo parses it as YAML and the
+    // rule set fails to load.
+    expect(metacubex).toContain("format: mrs");
+    const blackmatrix = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "blackmatrix7", adBlock: true }).body;
+    expect(blackmatrix).toContain("format: yaml");
+  });
+
+  it("keeps the sing-box remote config legal when every node is filtered out", () => {
+    // Probe auto-disabling dead nodes regularly produces the zero-node state;
+    // referencing the (nonexistent) selector outbound would stop sing-box
+    // from starting.
+    const parsed = JSON.parse(renderSubscription([], "singbox", { mode: "remote", adBlock: true }).body);
+    expect(JSON.stringify(parsed.route.rules)).not.toContain("节点选择");
+    expect(parsed.route.final).toBe("DIRECT");
+    expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.action === "reject")).toBe(true);
+    expect(parsed.route.rules.some((rule: Record<string, unknown>) => rule.rule_set === "rs-geoip-cn" && rule.outbound === "DIRECT")).toBe(true);
   });
 
   it("renders nodes only in minimal mode", () => {
@@ -217,7 +253,7 @@ describe("subscription rules and renderers", () => {
   it("falls back to MetaCubeX for sing-box even with the blackmatrix7 preset", () => {
     const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", preset: "blackmatrix7", adBlock: true }).body);
     // blackmatrix7 has no sing-box flavour; every rule set stays on MetaCubeX.
-    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/geosite/"))).toBe(true);
+    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/"))).toBe(true);
     expect(JSON.stringify(parsed)).not.toContain("ios_rule_script");
   });
 
