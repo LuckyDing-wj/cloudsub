@@ -35,8 +35,12 @@ export interface SubscriptionRules {
  */
 export interface OutputProfile {
   mode?: "builtin" | "remote" | "minimal";
-  /** Rule-set preset; `custom` points at a compatible repository. */
-  preset?: "metacubex" | "custom";
+  /**
+   * Rule-set preset. `metacubex` serves both Mihomo and sing-box; the larger
+   * `blackmatrix7` lists are Mihomo-only (sing-box falls back to MetaCubeX);
+   * `custom` points at a meta-rules-dat-compatible repository.
+   */
+  preset?: "metacubex" | "blackmatrix7" | "custom";
   /**
    * Rule-set root for the `custom` preset, including the branch, e.g.
    * `https://raw.githubusercontent.com/<owner>/<repo>/<branch>`.

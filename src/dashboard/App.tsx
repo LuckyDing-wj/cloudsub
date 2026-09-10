@@ -75,7 +75,7 @@ interface SubscriptionRules {
 }
 
 type OutputMode = "builtin" | "remote" | "minimal";
-type OutputPreset = "metacubex" | "custom";
+type OutputPreset = "metacubex" | "blackmatrix7" | "custom";
 
 interface OutputProfile {
   mode?: OutputMode;
@@ -441,11 +441,13 @@ function SubscriptionForm({ form, setForm, sources, busy, submitLabel, onSubmit 
           <option value="minimal">仅节点（自带策略）</option>
         </select></label>
         {form.outputMode === "remote" && <label>规则集来源<select value={form.outputPreset} onChange={(event) => setForm({ ...form, outputPreset: event.target.value as OutputPreset })}>
-          <option value="metacubex">MetaCubeX meta-rules-dat（更新最勤）</option>
+          <option value="metacubex">MetaCubeX meta-rules-dat（双格式，更新最勤）</option>
+          <option value="blackmatrix7">blackmatrix7 ios_rule_script（去广告更全，仅 Mihomo）</option>
           <option value="custom">自定义仓库地址</option>
         </select></label>}
       </div>
       {form.outputMode === "remote" && form.outputPreset === "custom" && <label>规则集仓库地址<input value={form.outputBaseUrl} onChange={(event) => setForm({ ...form, outputBaseUrl: event.target.value })} placeholder="https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/&lt;branch&gt;" /></label>}
+      {form.outputMode === "remote" && form.outputPreset === "blackmatrix7" && form.defaultTarget === "singbox" && <div className="callout">blackmatrix7 只有 Clash 格式规则，Sing-box 输出会自动改用 MetaCubeX 规则集。</div>}
       {form.outputMode === "remote" && <label className="check"><input type="checkbox" checked={form.adBlock} onChange={(event) => setForm({ ...form, adBlock: event.target.checked })} />启用去广告规则（category-ads-all → REJECT）</label>}
       {form.outputMode !== "builtin" && <p className="muted">远程规则集由客户端自行下载并按 interval 刷新，规则更新无需重新部署；仅对 Mihomo / Sing-box 输出生效。</p>}
     </fieldset>

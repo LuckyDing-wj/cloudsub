@@ -163,20 +163,22 @@ https://<your-worker>.workers.dev/sub/<token>?target=mihomo
 | `remote` | 只输出对**远程规则集**的引用，客户端自行下载并按 `interval` 刷新 —— 规则更新不用重新部署 |
 | `minimal` | 只输出节点（Mihomo 只给 `proxies:`，Sing-box 只给节点出站），分流策略交给你自己的客户端配置 |
 
-`remote` 模式默认指向 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（更新最勤的规则集仓库），
-Mihomo 取 `meta` 分支的 `.mrs`，Sing-box 取 `sing` 分支的 `.srs`，路径为 `/geo/geosite/<name>.<ext>`。可选规则集：
+`remote` 模式只输出规则集引用，规则集来源可选：
 
-| 规则集 | 用途 |
+| preset | 仓库 | 格式 | 说明 |
+|--------|------|------|------|
+| `metacubex`（默认） | [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) | Mihomo `.mrs`（`meta` 分支）+ Sing-box `.srs`（`sing` 分支） | 同时支持两种内核，每日更新 |
+| `blackmatrix7` | [blackmatrix7/ios_rule_script](https://github.com/blackmatrix7/ios_rule_script) | 仅 Mihomo（classical YAML） | 规则量最大：`Advertising` 约 28 万条、`ChinaMax` 约 12 万条；**Sing-box 输出会自动改用 MetaCubeX** |
+| `custom` | 自填 | 同 MetaCubeX 布局 | 填仓库根地址（**含分支**），程序拼接 `/geo/geosite/<name>.<ext>` |
+
+两种预设包含的类别：
+
+| preset | 类别 |
 |--------|------|
-| `category-ads-all` | 去广告 / 追踪（→ REJECT，可开关） |
-| `category-ai-!cn` | AI 服务 |
-| `telegram` | Telegram |
-| `netflix` / `youtube` | 流媒体 |
-| `apple` | Apple 服务 |
-| `cn` | 国内直连 |
+| `metacubex` | `category-ads-all`（去广告→REJECT，可开关）、`category-ai-!cn`、`telegram`、`netflix`、`youtube`、`apple`、`cn` |
+| `blackmatrix7` | `Advertising`（→REJECT，可开关）、`OpenAI`、`Telegram`、`Netflix`、`YouTube`、`Apple`、`ChinaMax` |
 
-`preset: custom` 时填自己的仓库根地址（**要含分支名**，例如
-`https://raw.githubusercontent.com/<owner>/<repo>/<branch>`），程序会拼接 `/geo/geosite/<name>.<ext>`。
+> 规则集由**客户端**下载并按 `interval`（默认 86400 秒）刷新，所以上游更新后无需重新部署。
 
 ## 技术栈
 

@@ -204,9 +204,32 @@ describe("subscription rules and renderers", () => {
     expect(singbox.outbounds.every((o: Record<string, unknown>) => o.type !== "selector")).toBe(true);
   });
 
+  it("uses blackmatrix7 classical lists for Mihomo when selected", () => {
+    const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "blackmatrix7", adBlock: true }).body;
+    // Classical (not domain) behavior, with the per-category YAML path.
+    expect(body).toContain("behavior: classical");
+    expect(body).toContain("ios_rule_script/master/rule/Clash/Advertising/Advertising.yaml");
+    expect(body).toContain("RULE-SET,Advertising,REJECT");
+    expect(body).toContain("RULE-SET,ChinaMax,DIRECT");
+    expect(body).toContain("ios_rule_script/master/rule/Clash/ChinaMax/ChinaMax.yaml");
+  });
+
+  it("falls back to MetaCubeX for sing-box even with the blackmatrix7 preset", () => {
+    const parsed = JSON.parse(renderSubscription(nodes, "singbox", { mode: "remote", preset: "blackmatrix7", adBlock: true }).body);
+    // blackmatrix7 has no sing-box flavour; every rule set stays on MetaCubeX.
+    expect(parsed.route.rule_set.every((set: Record<string, unknown>) => String(set.url).includes("meta-rules-dat/sing/geo/geosite/"))).toBe(true);
+    expect(JSON.stringify(parsed)).not.toContain("ios_rule_script");
+  });
+
   it("honours a custom rule-set base URL", () => {
     const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "custom", baseUrl: "https://example.com/rules/main/" }).body;
     expect(body).toContain("https://example.com/rules/main/geo/geosite/cn.mrs");
+  });
+
+  it("omits the ad provider for blackmatrix7 when ad blocking is off", () => {
+    const body = renderSubscription(nodes, "mihomo", { mode: "remote", preset: "blackmatrix7", adBlock: false }).body;
+    expect(body).not.toContain("Advertising");
+    expect(body).toContain("ChinaMax");
   });
 
   it("renders a valid minimal sing-box config when there are no nodes", () => {

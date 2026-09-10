@@ -201,19 +201,62 @@ function mihomoProxy(node: NormalizedNode): Record<string, unknown> {
 // Mihomo (.mrs) and sing-box (.srs) flavours from the same paths.
 
 // MetaCubeX/meta-rules-dat publishes the two flavours on separate *branches*
-// (`meta` → .mrs for Mihomo, `sing` → .srs for sing-box); the files live under
-// `geo/geosite/`. Verified against the live repository.
-const DEFAULT_RULE_SET_BASES: Record<"mihomo" | "singbox", string> = {
-  mihomo: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta",
-  singbox: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing",
-};
+// (`meta` → .mrs for Mihomo, `sing` → .srs for sing-box), files under
+// `geo/geosite/`. blackmatrix7/ios_rule_script publishes `rule/Clash/<Name>/`
+// YAML (classical behavior) — Mihomo only: it has no sing-box flavour, so the
+// sing-box renderer always falls back to MetaCubeX. All URLs verified live.
 
-/** Custom preset expects `baseUrl` to already include the branch. */
-function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, file: string): string {
-  const base = profile?.preset === "custom" && profile.baseUrl
-    ? profile.baseUrl.replace(/\/+$/u, "")
-    : DEFAULT_RULE_SET_BASES[kind];
-  return base + "/geo/geosite/" + file;
+interface MihomoRuleSet {
+  tag: string;
+  policy: string;
+  behaviour: "domain" | "classical";
+  /** Path relative to the preset's base, including the file name. */
+  path: string;
+  adBlockOnly?: boolean;
+}
+
+const METACUBEX_MIHOMO_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta";
+const METACUBEX_SINGBOX_BASE = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing";
+const BLACKMATRIX7_MIHOMO_BASE = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash";
+
+function mihomoRuleSets(profile: OutputProfile | undefined): MihomoRuleSet[] {
+  if (profile?.preset === "blackmatrix7") {
+    // Far larger lists than MetaCubeX (Advertising alone is ~280k entries),
+    // at the cost of a classical YAML download.
+    const clash = (name: string, policy: string): MihomoRuleSet => ({
+      tag: name, policy, behaviour: "classical", path: name + "/" + name + ".yaml",
+    });
+    return [
+      { ...clash("Advertising", "REJECT"), adBlockOnly: true },
+      clash("OpenAI", "🤖 AI"),
+      clash("Telegram", "📲 Telegram"),
+      clash("Netflix", "🌍 国外媒体"),
+      clash("YouTube", "🌍 国外媒体"),
+      clash("Apple", "🍎 Apple"),
+      clash("ChinaMax", "DIRECT"),
+    ];
+  }
+  const geo = (name: string, policy: string): MihomoRuleSet => ({
+    tag: name, policy, behaviour: "domain", path: "geo/geosite/" + name + ".mrs",
+  });
+  return [
+    { ...geo("category-ads-all", "REJECT"), adBlockOnly: true },
+    geo("category-ai-!cn", "🤖 AI"),
+    geo("telegram", "📲 Telegram"),
+    geo("netflix", "🌍 国外媒体"),
+    geo("youtube", "🌍 国外媒体"),
+    geo("apple", "🍎 Apple"),
+    geo("cn", "DIRECT"),
+  ];
+}
+
+function ruleSetUrl(kind: "mihomo" | "singbox", profile: OutputProfile | undefined, path: string): string {
+  // `custom` supplies the whole root (branch included).
+  if (profile?.preset === "custom" && profile.baseUrl) return profile.baseUrl.replace(/\/+$/u, "") + "/" + path;
+  const base = kind === "mihomo"
+    ? (profile?.preset === "blackmatrix7" ? BLACKMATRIX7_MIHOMO_BASE : METACUBEX_MIHOMO_BASE)
+    : METACUBEX_SINGBOX_BASE;
+  return base + "/" + path;
 }
 
 function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Record<string, unknown> {
@@ -256,40 +299,23 @@ function buildMihomoConfig(nodes: NormalizedNode[], profile?: OutputProfile): Re
 
   if (profile?.mode === "remote") {
     const interval = Math.max(3_600, Math.min(profile.updateInterval ?? 86_400, 2_592_000));
-    const provider = (name: string, behaviour: string, file: string) => ({
-      [name]: {
-        type: "http",
-        behavior: behaviour,
-        url: ruleSetUrl("mihomo", profile, file),
-        path: "./ruleset/" + file.replace(/\.mrs$/u, ""),
-        interval,
-      },
-    });
+    const sets = mihomoRuleSets(profile).filter((set) => !set.adBlockOnly || profile.adBlock);
     // Order matters: ads are rejected first, then the special-interest
     // categories, then geography, then the catch-all.
     const remoteRules = [
-      ...(profile.adBlock ? ["RULE-SET,category-ads-all,REJECT"] : []),
-      "RULE-SET,category-ai-!cn,🤖 AI",
-      "RULE-SET,telegram,📲 Telegram",
-      "RULE-SET,netflix,🌍 国外媒体",
-      "RULE-SET,youtube,🌍 国外媒体",
-      "RULE-SET,apple,🍎 Apple",
-      "RULE-SET,cn,DIRECT",
+      ...sets.map((set) => "RULE-SET," + set.tag + "," + set.policy),
       "MATCH,🐟 漏网之鱼",
     ];
     return {
       proxies,
       "proxy-groups": proxyGroups,
-      "rule-providers": Object.assign(
-        {},
-        ...(profile.adBlock ? [provider("category-ads-all", "domain", "category-ads-all.mrs")] : []),
-        provider("category-ai-!cn", "domain", "category-ai-!cn.mrs"),
-        provider("telegram", "domain", "telegram.mrs"),
-        provider("netflix", "domain", "netflix.mrs"),
-        provider("youtube", "domain", "youtube.mrs"),
-        provider("apple", "domain", "apple.mrs"),
-        provider("cn", "domain", "cn.mrs"),
-      ),
+      "rule-providers": Object.fromEntries(sets.map((set) => [set.tag, {
+        type: "http",
+        behavior: set.behaviour,
+        url: ruleSetUrl("mihomo", profile, set.path),
+        path: "./ruleset/" + set.tag,
+        interval,
+      }])),
       rules: remoteRules,
     };
   }
@@ -420,13 +446,13 @@ function buildSingboxConfig(nodes: NormalizedNode[], profile?: OutputProfile): R
     // only names them.
     const setTag = (name: string) => "rs-" + name;
     const sets: Record<string, unknown>[] = [
-      { tag: setTag("ai"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "category-ai-!cn.srs") },
-      { tag: setTag("telegram"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "telegram.srs") },
-      { tag: setTag("media"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "netflix.srs") },
-      { tag: setTag("cn"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "cn.srs") },
+      { tag: setTag("ai"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/category-ai-!cn.srs") },
+      { tag: setTag("telegram"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/telegram.srs") },
+      { tag: setTag("media"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/netflix.srs") },
+      { tag: setTag("cn"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/cn.srs") },
     ];
     if (profile.adBlock) {
-      sets.unshift({ tag: setTag("ads"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "category-ads-all.srs") });
+      sets.unshift({ tag: setTag("ads"), type: "remote", format: "binary", url: ruleSetUrl("singbox", profile, "geo/geosite/category-ads-all.srs") });
     }
     routeRules.push(
       ...(profile.adBlock ? [{ rule_set: setTag("ads"), action: "reject" } as Record<string, unknown>] : []),
