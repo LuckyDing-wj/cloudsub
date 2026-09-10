@@ -34,7 +34,7 @@ function main(): void {
     process.exit(0);
   }
 
-  const fixture = JSON.parse(readFileSync(new URL("../tests/fixtures/nodes.json", import.meta.url).pathname, "utf8")) as NormalizedNode[];
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/nodes.json", import.meta.url).pathname, "utf8")) as NormalizedNode[];
   const singboxFile = "/tmp/cloudsub-rendered-singbox.json";
   const mihomoFile = "/tmp/cloudsub-rendered-mihomo.yaml";
 

@@ -133,7 +133,7 @@
 
 仓库已内置两个 workflow：
 
-- `ci.yml` — 推送到 `main` 或提交 PR 时自动运行 lint、类型检查、测试与构建
+- `ci.yml` — 推送到 `main` 或提交 PR 时自动运行 lint 与构建
 - `deploy.yml` — 手动触发（`workflow_dispatch`），执行 `npm run build` → `wrangler d1 migrations apply DB --remote` → `wrangler deploy`
 
 在仓库 Settings → Secrets and variables → Actions 中配置：
@@ -278,8 +278,6 @@ migrations/
 npm run dev        # 本地开发 (Wrangler dev)
 npm run build      # 构建前端
 npm run lint       # ESLint
-npm run typecheck  # TypeScript 类型检查
-npm test           # Vitest 单元 + 集成测试
 ```
 ## TODO
 
