@@ -15,6 +15,20 @@ import type { Env } from "../env";
  */
 export const PROBE_BATCH_SIZE = 30;
 export const PROBE_TIMEOUT_MS = 4_000;
+/**
+ * Consecutive failures before a node is taken out of the served set.
+ *
+ * One failed TCP handshake is not evidence that a node is dead: the upstream
+ * may rate-limit or block Cloudflare egress, may be restarting, or the far
+ * side may simply refuse a connection from a datacentre IP. A single-failure
+ * threshold disabled a third of a real node set, so require a streak.
+ */
+export const PROBE_FAIL_THRESHOLD = 3;
+/**
+ * Transports whose data path is UDP: a TCP handshake to their port proves
+ * nothing (and fails for perfectly healthy nodes), so they are never probed.
+ */
+const UDP_ONLY_PROTOCOLS = ["hysteria2", "tuic"];
 
 export interface ProbeDecision {
   /** 1 to enable, 0 to disable, null = leave untouched. */
@@ -25,18 +39,21 @@ export interface ProbeDecision {
 /**
  * Pure state machine for a node's enabled flag after one probe:
  *
- *   serving        + ok      -> stays serving
- *   serving        + fail    -> auto-disable
- *   auto-disabled  + ok      -> re-enable (recovery)
- *   auto-disabled  + fail    -> stays off
- *   manually off   + any     -> hands off (manual choice wins)
+ *   serving        + ok         -> stays serving (streak resets)
+ *   serving        + fail(n<T)  -> stays serving (streak grows)
+ *   serving        + fail(n>=T) -> auto-disable
+ *   auto-disabled  + ok         -> re-enable (recovery, streak resets)
+ *   auto-disabled  + fail       -> stays off
+ *   manually off   + any        -> hands off (manual choice wins)
  */
-export function nextEnabledState(prevEnabled: boolean, prevAutoDisabled: boolean, probeOk: boolean): ProbeDecision {
+export function nextEnabledState(prevEnabled: boolean, prevAutoDisabled: boolean, probeOk: boolean, prevFailCount = 0): ProbeDecision {
   if (prevAutoDisabled) {
     return probeOk ? { enabled: 1, autoDisabled: 0 } : { enabled: 0, autoDisabled: 1 };
   }
   if (!prevEnabled) return { enabled: null, autoDisabled: 0 };
-  return probeOk ? { enabled: null, autoDisabled: 0 } : { enabled: 0, autoDisabled: 1 };
+  if (probeOk) return { enabled: null, autoDisabled: 0 };
+  const streak = prevFailCount + 1;
+  return streak >= PROBE_FAIL_THRESHOLD ? { enabled: 0, autoDisabled: 1 } : { enabled: null, autoDisabled: 0 };
 }
 
 export async function probeTcp(host: string, port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<{ ok: boolean; ms: number }> {
@@ -68,9 +85,10 @@ export async function probeTcp(host: string, port: number, timeoutMs = PROBE_TIM
 
 /** Probe a bounded round-robin batch of in-service/auto-disabled nodes. */
 export async function probeDueNodes(env: Env): Promise<void> {
+  const placeholders = UDP_ONLY_PROTOCOLS.map(() => "?").join(",");
   const due = await env.DB.prepare(
-    "SELECT id, source_id, server, port, enabled, auto_disabled FROM nodes WHERE present = 1 AND (enabled = 1 OR auto_disabled = 1) ORDER BY last_probe_at ASC NULLS FIRST LIMIT ?",
-  ).bind(PROBE_BATCH_SIZE).all<{ id: string; source_id: string; server: string; port: number; enabled: number; auto_disabled: number }>();
+    "SELECT id, source_id, server, port, enabled, auto_disabled, probe_fail_count FROM nodes WHERE present = 1 AND (enabled = 1 OR auto_disabled = 1) AND protocol NOT IN (" + placeholders + ") ORDER BY last_probe_at ASC NULLS FIRST LIMIT ?",
+  ).bind(...UDP_ONLY_PROTOCOLS, PROBE_BATCH_SIZE).all<{ id: string; source_id: string; server: string; port: number; enabled: number; auto_disabled: number; probe_fail_count: number }>();
   const now = new Date().toISOString();
   const changedSourceIds = new Set<string>();
   let cursor = 0;
@@ -79,10 +97,10 @@ export async function probeDueNodes(env: Env): Promise<void> {
       const node = due.results[cursor];
       cursor += 1;
       const probe = await probeTcp(node.server, node.port);
-      const decision = nextEnabledState(Boolean(node.enabled), Boolean(node.auto_disabled), probe.ok);
+      const decision = nextEnabledState(Boolean(node.enabled), Boolean(node.auto_disabled), probe.ok, node.probe_fail_count ?? 0);
       await env.DB.prepare(
-        "UPDATE nodes SET last_probe_at = ?, last_probe_ms = ?, probe_ok = ?, auto_disabled = ?, enabled = COALESCE(?, enabled), updated_at = ? WHERE id = ?",
-      ).bind(now, probe.ok ? probe.ms : 0, probe.ok ? 1 : 0, decision.autoDisabled, decision.enabled, now, node.id).run();
+        "UPDATE nodes SET last_probe_at = ?, last_probe_ms = ?, probe_ok = ?, probe_fail_count = CASE WHEN ? = 1 THEN 0 ELSE probe_fail_count + 1 END, auto_disabled = ?, enabled = COALESCE(?, enabled), updated_at = ? WHERE id = ?",
+      ).bind(now, probe.ok ? probe.ms : 0, probe.ok ? 1 : 0, probe.ok ? 1 : 0, decision.autoDisabled, decision.enabled, now, node.id).run();
       if (decision.enabled !== null) changedSourceIds.add(node.source_id);
     }
   });

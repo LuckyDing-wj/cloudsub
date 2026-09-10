@@ -1,13 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { nextEnabledState, PROBE_BATCH_SIZE, PROBE_TIMEOUT_MS } from "../../src/worker/services/probe";
+import { nextEnabledState, PROBE_BATCH_SIZE, PROBE_FAIL_THRESHOLD, PROBE_TIMEOUT_MS } from "../../src/worker/services/probe";
 
 describe("nextEnabledState (probe decision machine)", () => {
   it("leaves a serving node alone on success", () => {
     expect(nextEnabledState(true, false, true)).toEqual({ enabled: null, autoDisabled: 0 });
   });
 
-  it("auto-disables a serving node on a failed probe (threshold 1)", () => {
-    expect(nextEnabledState(true, false, false)).toEqual({ enabled: 0, autoDisabled: 1 });
+  it("keeps a serving node alive on isolated failures (below the streak threshold)", () => {
+    // A single failed handshake is not proof the node is dead — the upstream
+    // may be rate-limiting Cloudflare egress or restarting.
+    expect(nextEnabledState(true, false, false, 0)).toEqual({ enabled: null, autoDisabled: 0 });
+    expect(nextEnabledState(true, false, false, 1)).toEqual({ enabled: null, autoDisabled: 0 });
+  });
+
+  it("auto-disables a serving node once the failure streak reaches the threshold", () => {
+    expect(nextEnabledState(true, false, false, PROBE_FAIL_THRESHOLD - 1)).toEqual({ enabled: 0, autoDisabled: 1 });
+  });
+
+  it("resets the streak implicitly: success never disables", () => {
+    expect(nextEnabledState(true, false, true, PROBE_FAIL_THRESHOLD)).toEqual({ enabled: null, autoDisabled: 0 });
   });
 
   it("re-enables an auto-disabled node when it recovers", () => {

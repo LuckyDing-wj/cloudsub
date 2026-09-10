@@ -89,11 +89,17 @@ export const nodes = sqliteTable(
     rawUri: text("raw_uri"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     present: integer("present", { mode: "boolean" }).notNull().default(true),
+    lastProbeAt: text("last_probe_at"),
+    lastProbeMs: integer("last_probe_ms"),
+    probeOk: integer("probe_ok", { mode: "boolean" }),
+    probeFailCount: integer("probe_fail_count").notNull().default(0),
+    autoDisabled: integer("auto_disabled", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("nodes_source_fingerprint_unique").on(table.sourceId, table.fingerprint),
+    index("idx_nodes_probe_due").on(table.present, table.lastProbeAt),
     index("idx_nodes_source_present").on(table.sourceId, table.present),
     // Covers the hot subscription-generation filter (source_id + present + enabled).
     index("idx_nodes_source_present_enabled").on(table.sourceId, table.present, table.enabled),
